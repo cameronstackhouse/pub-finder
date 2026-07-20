@@ -1,6 +1,7 @@
 const POSTCODES_API = "https://api.postcodes.io/postcodes/";
 const PUBS_DATA_URL = "data/pubs-gb.json";
 const NEAREST_FALLBACK_COUNT = 5;
+const DATA_FETCH_TIMEOUT_MS = 20000;
 
 const form = document.getElementById("search-form");
 const postcodeInput = document.getElementById("postcode");
@@ -18,10 +19,14 @@ let pubPool = [];
 let map = null;
 let marker = null;
 let activePub = null;
+let pubsDataCache = null;
 
-// Kick off the static dataset fetch immediately so it's warm (or already
-// resolved) by the time the user submits a search.
-const pubsDataPromise = loadPubsData();
+// Warm the cache immediately so it's ready (or already loaded) by the time
+// the user submits a search. Failures are intentionally not cached here --
+// getPubsData() below retries the fetch on every call until one succeeds,
+// so a one-off network blip on this warm-up doesn't permanently break every
+// later search (it used to, when the fetch promise itself was memoized).
+getPubsData().catch(() => {});
 
 radiusInput.addEventListener("input", () => {
   radiusValue.textContent = radiusInput.value;
@@ -37,16 +42,28 @@ rerollBtn.addEventListener("click", () => {
   showRandomPub();
 });
 
+async function getPubsData() {
+  if (pubsDataCache) return pubsDataCache;
+  pubsDataCache = await loadPubsData();
+  return pubsDataCache;
+}
+
 async function loadPubsData() {
-  const res = await fetch(PUBS_DATA_URL);
-  if (!res.ok) throw new Error("bad status " + res.status);
-  const rows = await res.json();
-  return rows.map(([name, lat, lon, address]) => ({
-    name,
-    lat,
-    lon,
-    address: address || "Address not available",
-  }));
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DATA_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(PUBS_DATA_URL, { signal: controller.signal });
+    if (!res.ok) throw new Error("bad status " + res.status);
+    const rows = await res.json();
+    return rows.map(([name, lat, lon, address]) => ({
+      name,
+      lat,
+      lon,
+      address: address || "Address not available",
+    }));
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function runSearch() {
@@ -61,22 +78,18 @@ async function runSearch() {
   try {
     const [origin, allPubs] = await Promise.all([
       geocodePostcode(postcode),
-      pubsDataPromise.catch(() => {
-        throw new Error("Couldn't load the pub dataset. Please try again shortly.");
+      getPubsData().catch(() => {
+        // Not cached on failure -- the *next* search attempt will retry the fetch.
+        throw new Error("Couldn't load the pub dataset. Please try again.");
       }),
     ]);
 
-    const withDistance = allPubs
-      .map((pub) => ({ ...pub, distanceMiles: haversineMiles(origin.lat, origin.lon, pub.lat, pub.lon) }))
-      .sort((a, b) => a.distanceMiles - b.distanceMiles);
+    const { pubs, isFallback } = searchPubs(allPubs, origin, radiusMiles);
+    pubPool = pubs;
 
-    const withinRadius = withDistance.filter((pub) => pub.distanceMiles <= radiusMiles);
-
-    if (withinRadius.length > 0) {
-      pubPool = withinRadius;
+    if (!isFallback) {
       setStatus(`Found ${pubPool.length} pub${pubPool.length === 1 ? "" : "s"} within ${radiusMiles} miles.`);
     } else {
-      pubPool = withDistance.slice(0, NEAREST_FALLBACK_COUNT);
       setStatus(
         `No pubs within ${radiusMiles} miles of ${postcode.toUpperCase()} — showing the ${pubPool.length} closest instead.`
       );
@@ -113,6 +126,34 @@ async function geocodePostcode(postcode) {
   };
 }
 
+// Filters the full dataset down to pubs within radiusMiles of origin. Only
+// pubs that actually match get a distance-tagged copy allocated, and only
+// that (usually much smaller) matching set gets sorted -- the full ~56k
+// dataset is never copied or sorted wholesale on the common path. Falls
+// back to the nearest few pubs overall when nothing is in range.
+function searchPubs(allPubs, origin, radiusMiles) {
+  const withinRadius = [];
+
+  for (const pub of allPubs) {
+    const distanceMiles = haversineMiles(origin.lat, origin.lon, pub.lat, pub.lon);
+    if (distanceMiles <= radiusMiles) {
+      withinRadius.push({ ...pub, distanceMiles });
+    }
+  }
+
+  if (withinRadius.length > 0) {
+    withinRadius.sort((a, b) => a.distanceMiles - b.distanceMiles);
+    return { pubs: withinRadius, isFallback: false };
+  }
+
+  const nearest = allPubs
+    .map((pub) => ({ ...pub, distanceMiles: haversineMiles(origin.lat, origin.lon, pub.lat, pub.lon) }))
+    .sort((a, b) => a.distanceMiles - b.distanceMiles)
+    .slice(0, NEAREST_FALLBACK_COUNT);
+
+  return { pubs: nearest, isFallback: true };
+}
+
 function haversineMiles(lat1, lon1, lat2, lon2) {
   const R = 3958.8; // Earth radius in miles
   const toRad = (deg) => (deg * Math.PI) / 180;
@@ -136,7 +177,7 @@ function showPub(pub) {
   document.getElementById("pub-name").textContent = pub.name;
   document.getElementById("pub-address").textContent = pub.address;
   document.getElementById("pub-distance").textContent = `${pub.distanceMiles.toFixed(2)} miles away`;
-  directionsLink.href = `https://www.openstreetmap.org/directions?to=${pub.lat}%2C${pub.lon}`;
+  directionsLink.href = `https://www.google.com/maps/dir/?api=1&destination=${pub.lat}%2C${pub.lon}`;
 
   resultSection.classList.remove("hidden");
   renderMap(pub);
