@@ -1,9 +1,6 @@
 const POSTCODES_API = "https://api.postcodes.io/postcodes/";
-const OVERPASS_ENDPOINTS = [
-  "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
-];
-const MILES_TO_METRES = 1609.34;
+const PUBS_DATA_URL = "data/pubs-gb.json";
+const NEAREST_FALLBACK_COUNT = 5;
 
 const form = document.getElementById("search-form");
 const postcodeInput = document.getElementById("postcode");
@@ -18,10 +15,13 @@ const listHeading = document.getElementById("list-heading");
 const pubListEl = document.getElementById("pub-list");
 
 let pubPool = [];
-let origin = null;
 let map = null;
 let marker = null;
 let activePub = null;
+
+// Kick off the static dataset fetch immediately so it's warm (or already
+// resolved) by the time the user submits a search.
+const pubsDataPromise = loadPubsData();
 
 radiusInput.addEventListener("input", () => {
   radiusValue.textContent = radiusInput.value;
@@ -37,6 +37,18 @@ rerollBtn.addEventListener("click", () => {
   showRandomPub();
 });
 
+async function loadPubsData() {
+  const res = await fetch(PUBS_DATA_URL);
+  if (!res.ok) throw new Error("bad status " + res.status);
+  const rows = await res.json();
+  return rows.map(([name, lat, lon, address]) => ({
+    name,
+    lat,
+    lon,
+    address: address || "Address not available",
+  }));
+}
+
 async function runSearch() {
   const postcode = postcodeInput.value.trim();
   const radiusMiles = parseFloat(radiusInput.value);
@@ -47,27 +59,36 @@ async function runSearch() {
   resultSection.classList.add("hidden");
 
   try {
-    origin = await geocodePostcode(postcode);
-    setStatus("Searching for pubs nearby…");
+    const [origin, allPubs] = await Promise.all([
+      geocodePostcode(postcode),
+      pubsDataPromise.catch(() => {
+        throw new Error("Couldn't load the pub dataset. Please try again shortly.");
+      }),
+    ]);
 
-    const pubs = await findPubs(origin, radiusMiles);
+    const withDistance = allPubs
+      .map((pub) => ({ ...pub, distanceMiles: haversineMiles(origin.lat, origin.lon, pub.lat, pub.lon) }))
+      .sort((a, b) => a.distanceMiles - b.distanceMiles);
 
-    if (pubs.length === 0) {
+    const withinRadius = withDistance.filter((pub) => pub.distanceMiles <= radiusMiles);
+
+    if (withinRadius.length > 0) {
+      pubPool = withinRadius;
+      setStatus(`Found ${pubPool.length} pub${pubPool.length === 1 ? "" : "s"} within ${radiusMiles} miles.`);
+    } else {
+      pubPool = withDistance.slice(0, NEAREST_FALLBACK_COUNT);
       setStatus(
-        `No pubs found within ${radiusMiles} miles of ${postcode.toUpperCase()}. Try a bigger radius.`
+        `No pubs within ${radiusMiles} miles of ${postcode.toUpperCase()} — showing the ${pubPool.length} closest instead.`
       );
-      pubPool = [];
-      pubListEl.innerHTML = "";
-      return;
     }
 
-    pubPool = pubs.sort((a, b) => a.distanceMiles - b.distanceMiles);
-    setStatus(`Found ${pubs.length} pub${pubs.length === 1 ? "" : "s"} within ${radiusMiles} miles.`);
     renderList();
     showRandomPub();
   } catch (err) {
     console.error(err);
     setStatus(err.message || "Something went wrong. Please try again.");
+    pubPool = [];
+    pubListEl.innerHTML = "";
   } finally {
     setBusy(false);
   }
@@ -90,84 +111,6 @@ async function geocodePostcode(postcode) {
     lon: data.result.longitude,
     label: data.result.postcode,
   };
-}
-
-async function findPubs(origin, radiusMiles) {
-  const radiusMetres = Math.round(radiusMiles * MILES_TO_METRES);
-  const query = `
-    [out:json][timeout:25];
-    (
-      node["amenity"="pub"](around:${radiusMetres},${origin.lat},${origin.lon});
-      way["amenity"="pub"](around:${radiusMetres},${origin.lat},${origin.lon});
-    );
-    out center tags;
-  `;
-
-  const fetchFrom = async (endpoint) => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-    try {
-      const res = await fetch(endpoint, {
-        method: "POST",
-        body: "data=" + encodeURIComponent(query),
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        signal: controller.signal,
-      });
-      if (!res.ok) throw new Error("bad status " + res.status);
-      return await res.json();
-    } finally {
-      clearTimeout(timeout);
-    }
-  };
-
-  // Race all mirrors so a slow/overloaded instance doesn't block the whole search.
-  let data;
-  try {
-    data = await Promise.any(OVERPASS_ENDPOINTS.map(fetchFrom));
-  } catch {
-    data = null;
-  }
-
-  if (!data) {
-    throw new Error("Couldn't reach the pub database right now. Please try again shortly.");
-  }
-
-  const seen = new Set();
-  const pubs = [];
-
-  for (const el of data.elements || []) {
-    const lat = el.lat ?? el.center?.lat;
-    const lon = el.lon ?? el.center?.lon;
-    if (lat == null || lon == null) continue;
-
-    const tags = el.tags || {};
-    const name = tags.name || "Unnamed pub";
-    const key = name + "|" + lat.toFixed(4) + "|" + lon.toFixed(4);
-    if (seen.has(key)) continue;
-    seen.add(key);
-
-    const distanceMiles = haversineMiles(origin.lat, origin.lon, lat, lon);
-    if (distanceMiles > radiusMiles) continue;
-
-    pubs.push({
-      name,
-      lat,
-      lon,
-      distanceMiles,
-      address: formatAddress(tags),
-    });
-  }
-
-  return pubs;
-}
-
-function formatAddress(tags) {
-  const parts = [
-    [tags["addr:housenumber"], tags["addr:street"]].filter(Boolean).join(" "),
-    tags["addr:city"],
-    tags["addr:postcode"],
-  ].filter(Boolean);
-  return parts.length ? parts.join(", ") : "Address not available";
 }
 
 function haversineMiles(lat1, lon1, lat2, lon2) {
@@ -202,7 +145,7 @@ function showPub(pub) {
 
 function renderList() {
   pubListEl.innerHTML = "";
-  listHeading.textContent = `All ${pubPool.length} pub${pubPool.length === 1 ? "" : "s"} in range, closest first`;
+  listHeading.textContent = `${pubPool.length} pub${pubPool.length === 1 ? "" : "s"}, closest first`;
 
   for (const pub of pubPool) {
     const li = document.createElement("li");
