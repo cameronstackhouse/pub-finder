@@ -82,8 +82,22 @@ for (const feature of geojson.features || []) {
   seen.add(key);
 
   const operator = tags.operator || tags.brand || "";
+  const website = tags.website || tags["contact:website"] || "";
+  const phone = tags.phone || tags["contact:phone"] || "";
+  const openingHours = tags.opening_hours || "";
+  const wikipedia = tags.wikipedia || "";
 
-  rows.push([name, roundedLat, roundedLon, formatAddress(tags), operator]);
+  rows.push([
+    name,
+    roundedLat,
+    roundedLon,
+    formatAddress(tags),
+    operator,
+    website,
+    phone,
+    openingHours,
+    wikipedia,
+  ]);
 }
 
 rows.sort((a, b) => a[1] - b[1] || a[2] - b[2]);

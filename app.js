@@ -14,6 +14,14 @@ const rerollBtn = document.getElementById("reroll-btn");
 const directionsLink = document.getElementById("directions-link");
 const listHeading = document.getElementById("list-heading");
 const pubListEl = document.getElementById("pub-list");
+const moreInfoBtn = document.getElementById("more-info-btn");
+const moreInfoPanel = document.getElementById("more-info");
+const moreInfoStatus = document.getElementById("more-info-status");
+const moreInfoFacts = document.getElementById("more-info-facts");
+const wikiSummaryEl = document.getElementById("wiki-summary");
+const wikiThumb = document.getElementById("wiki-thumb");
+const wikiExtract = document.getElementById("wiki-extract");
+const wikiLink = document.getElementById("wiki-link");
 
 let pubPool = [];
 let map = null;
@@ -42,6 +50,16 @@ rerollBtn.addEventListener("click", () => {
   showRandomPub();
 });
 
+moreInfoBtn.addEventListener("click", () => {
+  if (!activePub) return;
+  if (moreInfoPanel.classList.contains("hidden")) {
+    openMoreInfo(activePub);
+  } else {
+    moreInfoPanel.classList.add("hidden");
+    moreInfoBtn.textContent = "Tell me more";
+  }
+});
+
 async function getPubsData() {
   if (pubsDataCache) return pubsDataCache;
   pubsDataCache = await loadPubsData();
@@ -55,12 +73,16 @@ async function loadPubsData() {
     const res = await fetch(PUBS_DATA_URL, { signal: controller.signal });
     if (!res.ok) throw new Error("bad status " + res.status);
     const rows = await res.json();
-    return rows.map(([name, lat, lon, address, operator]) => ({
+    return rows.map(([name, lat, lon, address, operator, website, phone, openingHours, wikipedia]) => ({
       name,
       lat,
       lon,
       address: address || "Address not available",
       operator: operator || "",
+      website: website || "",
+      phone: phone || "",
+      openingHours: openingHours || "",
+      wikipedia: wikipedia || "",
     }));
   } finally {
     clearTimeout(timeout);
@@ -240,6 +262,123 @@ function showPub(pub) {
   resultSection.classList.remove("hidden");
   renderMap(pub);
   highlightActiveListItem();
+
+  // Collapse any detail panel left open from the previous pub.
+  moreInfoPanel.classList.add("hidden");
+  moreInfoBtn.textContent = "Tell me more";
+  moreInfoStatus.textContent = "";
+  moreInfoFacts.innerHTML = "";
+  wikiSummaryEl.classList.add("hidden");
+}
+
+// Shows facts already in our free dataset (opening hours/phone/website from
+// OSM tags) plus, when the pub has a linked Wikipedia article, a real
+// summary fetched from Wikipedia's free public API -- no API key, no AI,
+// no invented details about a real business.
+async function openMoreInfo(pub) {
+  moreInfoPanel.classList.remove("hidden");
+  moreInfoBtn.textContent = "Hide details";
+  moreInfoStatus.textContent = "";
+  renderFacts(pub);
+  wikiSummaryEl.classList.add("hidden");
+
+  const hasFacts = Boolean(pub.openingHours || pub.phone || pub.website);
+
+  if (!pub.wikipedia) {
+    if (!hasFacts) moreInfoStatus.textContent = "No extra details available for this pub.";
+    return;
+  }
+
+  if (pub.wikiSummaryCache) {
+    renderWikiSummary(pub.wikiSummaryCache);
+    return;
+  }
+
+  moreInfoStatus.textContent = "Loading Wikipedia summary…";
+  try {
+    const summary = await fetchWikipediaSummary(pub.wikipedia);
+    pub.wikiSummaryCache = summary;
+    if (activePub !== pub) return; // user moved on before this resolved
+    moreInfoStatus.textContent = "";
+    renderWikiSummary(summary);
+  } catch (err) {
+    console.error(err);
+    if (activePub !== pub) return;
+    moreInfoStatus.textContent = hasFacts ? "" : "No extra details available for this pub.";
+  }
+}
+
+function renderFacts(pub) {
+  moreInfoFacts.innerHTML = "";
+  const entries = [
+    pub.openingHours && ["Opening hours", pub.openingHours, "text"],
+    pub.phone && ["Phone", pub.phone, "tel"],
+    pub.website && ["Website", pub.website, "url"],
+  ].filter(Boolean);
+
+  for (const [label, value, kind] of entries) {
+    const dt = document.createElement("dt");
+    dt.textContent = label;
+    const dd = document.createElement("dd");
+
+    if (kind === "url") {
+      const a = document.createElement("a");
+      a.href = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+      a.textContent = value;
+      a.target = "_blank";
+      a.rel = "noopener";
+      dd.appendChild(a);
+    } else if (kind === "tel") {
+      const a = document.createElement("a");
+      a.href = `tel:${value.replace(/\s+/g, "")}`;
+      a.textContent = value;
+      dd.appendChild(a);
+    } else {
+      dd.textContent = value;
+    }
+
+    moreInfoFacts.appendChild(dt);
+    moreInfoFacts.appendChild(dd);
+  }
+}
+
+function renderWikiSummary(summary) {
+  wikiExtract.textContent = summary.extract;
+  wikiLink.href = summary.url;
+  if (summary.thumbnail) {
+    wikiThumb.src = summary.thumbnail;
+    wikiThumb.classList.remove("hidden");
+  } else {
+    wikiThumb.classList.add("hidden");
+    wikiThumb.removeAttribute("src");
+  }
+  wikiSummaryEl.classList.remove("hidden");
+}
+
+// OSM's wikipedia tag format is "lang:Title", e.g. "en:Ye Olde Trip to Jerusalem".
+async function fetchWikipediaSummary(wikipediaTag) {
+  const match = wikipediaTag.match(/^([a-z-]+):(.+)$/i);
+  if (!match) throw new Error("Unrecognised wikipedia tag format");
+  const [, lang, title] = match;
+
+  const url = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(
+    title.replace(/ /g, "_")
+  )}`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(url, { signal: controller.signal, headers: { Accept: "application/json" } });
+    if (!res.ok) throw new Error("bad status " + res.status);
+    const data = await res.json();
+    return {
+      extract: data.extract || "",
+      url: data.content_urls?.desktop?.page || `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title)}`,
+      thumbnail: data.thumbnail?.source || null,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function renderList() {
