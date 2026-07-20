@@ -128,7 +128,31 @@ async function loadPubsData() {
     if (!res.ok) throw new Error("bad status " + res.status);
     const rows = await res.json();
     return rows.map(
-      ([name, lat, lon, address, operator, website, phone, openingHours, wikipedia, beerGarden, dogFriendly, foodServed]) => ({
+      ([
+        name,
+        lat,
+        lon,
+        address,
+        operator,
+        website,
+        phone,
+        openingHours,
+        wikipedia,
+        beerGarden,
+        dogFriendly,
+        foodServed,
+        wheelchair,
+        realAle,
+        paymentCash,
+        paymentCardYes,
+        paymentCardNo,
+        description,
+        image,
+        listedStatus,
+        startDate,
+        darts,
+        pool,
+      ]) => ({
         name,
         lat,
         lon,
@@ -141,6 +165,17 @@ async function loadPubsData() {
         beerGarden: Boolean(beerGarden),
         dogFriendly: Boolean(dogFriendly),
         foodServed: Boolean(foodServed),
+        wheelchair: wheelchair || "",
+        realAle: Boolean(realAle),
+        paymentCash: Boolean(paymentCash),
+        paymentCardYes: Boolean(paymentCardYes),
+        paymentCardNo: Boolean(paymentCardNo),
+        description: description || "",
+        image: image || "",
+        listedStatus: listedStatus || "",
+        startDate: startDate || "",
+        darts: Boolean(darts),
+        pool: Boolean(pool),
       })
     );
   } finally {
@@ -523,13 +558,14 @@ async function openMoreInfo(pub) {
   moreInfoPanel.classList.remove("hidden");
   moreInfoBtn.textContent = "Hide details";
   moreInfoStatus.textContent = "";
-  renderFacts(pub);
+  const factCount = renderFacts(pub);
+  renderDescriptionAndPhoto(pub);
   wikiSummaryEl.classList.add("hidden");
 
-  const hasFacts = Boolean(pub.openingHours || pub.phone || pub.website);
+  const hasOwnContent = factCount > 0 || Boolean(pub.description) || Boolean(pub.image);
 
   if (!pub.wikipedia) {
-    if (!hasFacts) moreInfoStatus.textContent = "No extra details available for this pub.";
+    if (!hasOwnContent) moreInfoStatus.textContent = "No extra details available for this pub.";
     return;
   }
 
@@ -548,16 +584,65 @@ async function openMoreInfo(pub) {
   } catch (err) {
     console.error(err);
     if (activePub !== pub) return;
-    moreInfoStatus.textContent = hasFacts ? "" : "No extra details available for this pub.";
+    moreInfoStatus.textContent = hasOwnContent ? "" : "No extra details available for this pub.";
   }
 }
 
+// Only ever claims "Cash only" when a card tag is explicitly "no" -- an
+// untagged card status means we don't know, not that cards are refused.
+function formatPayment(pub) {
+  if (pub.paymentCardYes) return "Card accepted";
+  if (pub.paymentCardNo && pub.paymentCash) return "Cash only";
+  if (pub.paymentCash) return "Cash accepted";
+  return "";
+}
+
+function formatWheelchairAccess(value) {
+  if (value === "yes") return "Wheelchair accessible";
+  if (value === "limited") return "Limited wheelchair access";
+  if (value === "no") return "Not wheelchair accessible";
+  return "";
+}
+
+function renderDescriptionAndPhoto(pub) {
+  const photoEl = document.getElementById("pub-photo");
+  if (pub.image) {
+    photoEl.src = pub.image;
+    photoEl.onerror = () => photoEl.classList.add("hidden");
+    photoEl.classList.remove("hidden");
+  } else {
+    photoEl.classList.add("hidden");
+    photoEl.removeAttribute("src");
+  }
+
+  const descEl = document.getElementById("pub-description");
+  descEl.textContent = pub.description || "";
+  descEl.classList.toggle("hidden", !pub.description);
+}
+
+// Returns the number of fact rows rendered, so the caller can tell whether
+// there's genuinely nothing to show for this pub.
 function renderFacts(pub) {
   moreInfoFacts.innerHTML = "";
+
+  const amenities = [
+    pub.realAle && "Real ale",
+    pub.beerGarden && "Beer garden",
+    pub.dogFriendly && "Dog-friendly",
+    pub.foodServed && "Food served",
+    pub.darts && "Darts",
+    pub.pool && "Pool table",
+  ].filter(Boolean);
+
   const entries = [
     pub.openingHours && ["Opening hours", pub.openingHours, "text"],
     pub.phone && ["Phone", pub.phone, "tel"],
     pub.website && ["Website", pub.website, "url"],
+    formatWheelchairAccess(pub.wheelchair) && ["Access", formatWheelchairAccess(pub.wheelchair), "text"],
+    formatPayment(pub) && ["Payment", formatPayment(pub), "text"],
+    pub.listedStatus && ["Listed building", pub.listedStatus, "text"],
+    pub.startDate && ["Built", pub.startDate, "text"],
+    amenities.length > 0 && ["Amenities", amenities.join(", "), "text"],
   ].filter(Boolean);
 
   for (const [label, value, kind] of entries) {
@@ -584,6 +669,8 @@ function renderFacts(pub) {
     moreInfoFacts.appendChild(dt);
     moreInfoFacts.appendChild(dd);
   }
+
+  return entries.length;
 }
 
 function renderWikiSummary(summary) {
@@ -735,6 +822,20 @@ function toggleFavourite(pub) {
       phone: pub.phone || "",
       openingHours: pub.openingHours || "",
       wikipedia: pub.wikipedia || "",
+      beerGarden: Boolean(pub.beerGarden),
+      dogFriendly: Boolean(pub.dogFriendly),
+      foodServed: Boolean(pub.foodServed),
+      wheelchair: pub.wheelchair || "",
+      realAle: Boolean(pub.realAle),
+      paymentCash: Boolean(pub.paymentCash),
+      paymentCardYes: Boolean(pub.paymentCardYes),
+      paymentCardNo: Boolean(pub.paymentCardNo),
+      description: pub.description || "",
+      image: pub.image || "",
+      listedStatus: pub.listedStatus || "",
+      startDate: pub.startDate || "",
+      darts: Boolean(pub.darts),
+      pool: Boolean(pub.pool),
     });
   }
 
