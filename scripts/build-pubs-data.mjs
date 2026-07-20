@@ -87,6 +87,12 @@ for (const feature of geojson.features || []) {
   const openingHours = tags.opening_hours || "";
   const wikipedia = tags.wikipedia || "";
 
+  // Kept as compact "1"/"" flags rather than raw tag values -- the app only
+  // ever needs "does this pub have it", not the full range of tag values.
+  const beerGarden = tags.beer_garden === "yes" || tags.outdoor_seating === "yes" ? "1" : "";
+  const dogFriendly = tags.dog === "yes" || tags.dog === "leashed" ? "1" : "";
+  const foodServed = tags.food === "yes" ? "1" : "";
+
   rows.push([
     name,
     roundedLat,
@@ -97,6 +103,9 @@ for (const feature of geojson.features || []) {
     phone,
     openingHours,
     wikipedia,
+    beerGarden,
+    dogFriendly,
+    foodServed,
   ]);
 }
 
