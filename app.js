@@ -657,10 +657,10 @@ async function openMoreInfo(pub) {
   moreInfoBtn.textContent = "Hide details";
   moreInfoStatus.textContent = "";
   const factCount = renderFacts(pub);
-  renderDescriptionAndPhoto(pub);
+  renderDescription(pub);
   wikiSummaryEl.classList.add("hidden");
 
-  const hasOwnContent = factCount > 0 || Boolean(pub.description) || Boolean(pub.image);
+  const hasOwnContent = factCount > 0 || Boolean(pub.description);
 
   if (!pub.wikipedia) {
     if (!hasOwnContent) moreInfoStatus.textContent = "No extra details available for this pub.";
@@ -710,18 +710,13 @@ function formatWheelchairAccess(value) {
   return "";
 }
 
+// OSM's image tag isn't reliably a direct image URL -- some values are
+// pages *about* an image (archive.org item pages, Commons file pages, etc.)
+// rather than the image itself, which just renders as a broken-image glyph.
+// Not worth trying to validate at build time for ~1% coverage, so this data
+// is collected but intentionally never rendered.
 /** @param {Pub} pub */
-function renderDescriptionAndPhoto(pub) {
-  const photoEl = /** @type {HTMLImageElement} */ (getEl("pub-photo"));
-  if (pub.image) {
-    photoEl.src = pub.image;
-    photoEl.onerror = () => photoEl.classList.add("hidden");
-    photoEl.classList.remove("hidden");
-  } else {
-    photoEl.classList.add("hidden");
-    photoEl.removeAttribute("src");
-  }
-
+function renderDescription(pub) {
   const descEl = getEl("pub-description");
   descEl.textContent = pub.description || "";
   descEl.classList.toggle("hidden", !pub.description);
