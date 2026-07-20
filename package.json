@@ -1,0 +1,11 @@
+{
+  "name": "pub-finder",
+  "private": true,
+  "description": "Static pub finder site -- no build step for deployment, TypeScript is used only to type-check the plain JS via JSDoc.",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

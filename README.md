@@ -31,3 +31,19 @@ regenerate it and commit the result.
 ## Deployment
 
 Deployed automatically to GitHub Pages via `.github/workflows/deploy.yml` on every push.
+
+## Type-checking
+
+`app.js` is still plain JavaScript -- no build step, no bundler, deployment is
+still "copy the static files as-is". Types come from JSDoc comments, checked
+by TypeScript in `--checkJs` mode (see `tsconfig.json`) purely as a lint step:
+
+```sh
+npm install
+npm run typecheck
+```
+
+Runs automatically on push via `.github/workflows/typecheck.yml`. Scoped to
+`app.js` only for now (it's the file with the complex, shared `Pub` data
+shape); `scripts/build-pubs-data.mjs` runs in Node rather than the browser
+and hasn't been brought in yet.

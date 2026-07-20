@@ -8,45 +8,106 @@ const THEME_KEY = "pubFinder.theme";
 const RECENT_SEARCHES_MAX = 6;
 const WALK_SPEED_MPH = 3;
 
-const form = document.getElementById("search-form");
-const postcodeInput = document.getElementById("postcode");
-const radiusInput = document.getElementById("radius");
-const radiusValue = document.getElementById("radius-value");
-const submitBtn = document.getElementById("submit-btn");
-const locationBtn = document.getElementById("location-btn");
-const themeToggleBtn = document.getElementById("theme-toggle");
-const filterChipsEl = document.getElementById("filter-chips");
-const statusEl = document.getElementById("status");
-const resultSection = document.getElementById("result");
-const rerollBtn = document.getElementById("reroll-btn");
-const directionsLink = document.getElementById("directions-link");
-const listHeading = document.getElementById("list-heading");
-const pubListEl = document.getElementById("pub-list");
-const moreInfoBtn = document.getElementById("more-info-btn");
-const moreInfoPanel = document.getElementById("more-info");
-const moreInfoStatus = document.getElementById("more-info-status");
-const moreInfoFacts = document.getElementById("more-info-facts");
-const wikiSummaryEl = document.getElementById("wiki-summary");
-const wikiThumb = document.getElementById("wiki-thumb");
-const wikiExtract = document.getElementById("wiki-extract");
-const wikiLink = document.getElementById("wiki-link");
-const favouriteBtn = document.getElementById("favourite-btn");
-const tabSearchBtn = document.getElementById("tab-search");
-const tabFavouritesBtn = document.getElementById("tab-favourites");
-const searchView = document.getElementById("search-view");
-const favouritesView = document.getElementById("favourites-view");
-const favouritesCountEl = document.getElementById("favourites-count");
-const favouritesListEl = document.getElementById("favourites-list");
-const favouritesEmptyEl = document.getElementById("favourites-empty");
-const recentSearchesEl = document.getElementById("recent-searches");
+/**
+ * @typedef {Object} Pub
+ * @property {string} name
+ * @property {number} lat
+ * @property {number} lon
+ * @property {string} address
+ * @property {string} operator
+ * @property {string} website
+ * @property {string} phone
+ * @property {string} openingHours
+ * @property {string} wikipedia
+ * @property {boolean} beerGarden
+ * @property {boolean} dogFriendly
+ * @property {boolean} foodServed
+ * @property {""|"yes"|"limited"|"no"} wheelchair
+ * @property {boolean} realAle
+ * @property {boolean} paymentCash
+ * @property {boolean} paymentCardYes
+ * @property {boolean} paymentCardNo
+ * @property {string} description
+ * @property {string} image
+ * @property {string} listedStatus
+ * @property {string} startDate
+ * @property {boolean} darts
+ * @property {boolean} pool
+ * @property {boolean} nearSea
+ * @property {number} [distanceMiles] Only set once a pub has been matched against a search origin; absent for a pub viewed straight from favourites.
+ * @property {{extract: string, url: string, thumbnail: string|null}} [wikiSummaryCache] Populated lazily the first time "Tell me more" fetches this pub's Wikipedia summary.
+ */
 
+/**
+ * @typedef {Object} Origin
+ * @property {number} lat
+ * @property {number} lon
+ * @property {string} label
+ */
+
+/**
+ * Thin wrapper around document.getElementById that lets call sites cast to
+ * the specific element subtype they need (all of these IDs are hardcoded in
+ * our own index.html, so the element is guaranteed to exist and be of that
+ * type -- this isn't asserting anything we don't already know to be true).
+ * @template {HTMLElement} [T=HTMLElement]
+ * @param {string} id
+ * @returns {T}
+ */
+function getEl(id) {
+  return /** @type {T} */ (document.getElementById(id));
+}
+
+const form = getEl("search-form");
+const postcodeInput = /** @type {HTMLInputElement} */ (getEl("postcode"));
+const radiusInput = /** @type {HTMLInputElement} */ (getEl("radius"));
+const radiusValue = getEl("radius-value");
+const submitBtn = /** @type {HTMLButtonElement} */ (getEl("submit-btn"));
+const locationBtn = /** @type {HTMLButtonElement} */ (getEl("location-btn"));
+const themeToggleBtn = getEl("theme-toggle");
+const filterChipsEl = getEl("filter-chips");
+const statusEl = getEl("status");
+const resultSection = getEl("result");
+const rerollBtn = /** @type {HTMLButtonElement} */ (getEl("reroll-btn"));
+const directionsLink = /** @type {HTMLAnchorElement} */ (getEl("directions-link"));
+const listHeading = getEl("list-heading");
+const pubListEl = getEl("pub-list");
+const moreInfoBtn = /** @type {HTMLButtonElement} */ (getEl("more-info-btn"));
+const moreInfoPanel = getEl("more-info");
+const moreInfoStatus = getEl("more-info-status");
+const moreInfoFacts = getEl("more-info-facts");
+const wikiSummaryEl = getEl("wiki-summary");
+const wikiThumb = /** @type {HTMLImageElement} */ (getEl("wiki-thumb"));
+const wikiExtract = getEl("wiki-extract");
+const wikiLink = /** @type {HTMLAnchorElement} */ (getEl("wiki-link"));
+const favouriteBtn = /** @type {HTMLButtonElement} */ (getEl("favourite-btn"));
+const tabSearchBtn = /** @type {HTMLButtonElement} */ (getEl("tab-search"));
+const tabFavouritesBtn = /** @type {HTMLButtonElement} */ (getEl("tab-favourites"));
+const searchView = getEl("search-view");
+const favouritesView = getEl("favourites-view");
+const favouritesCountEl = getEl("favourites-count");
+const favouritesListEl = getEl("favourites-list");
+const favouritesEmptyEl = getEl("favourites-empty");
+const recentSearchesEl = getEl("recent-searches");
+
+/** @type {Pub[]} */
 let pubPool = [];
+/** @type {any} Leaflet map instance; see types/leaflet.d.ts for why L itself is untyped. */
 let map = null;
+/** @type {any} */
 let marker = null;
+/** @type {Pub|null} */
 let activePub = null;
+/** @type {Pub[]|null} */
 let pubsDataCache = null;
+/** @type {string|null} */
 let currentSearchKey = null;
-const activeFilters = new Set(); // subset of "beerGarden" | "dogFriendly" | "foodServed"
+// Values come from each chip's data-filter HTML attribute, so this stays a
+// plain Set<string> rather than the literal union -- TS can't verify a DOM
+// attribute against a union, and pretending otherwise would just mean
+// casting at the one call site that reads it instead of here.
+/** @type {Set<string>} */
+const activeFilters = new Set();
 
 // Warm the cache immediately so it's ready (or already loaded) by the time
 // the user submits a search. Failures are intentionally not cached here --
@@ -85,7 +146,7 @@ themeToggleBtn.addEventListener("click", () => {
 });
 
 filterChipsEl.addEventListener("click", (e) => {
-  const btn = e.target.closest("button[data-filter]");
+  const btn = /** @type {HTMLElement} */ (/** @type {Element} */ (e.target).closest("button[data-filter]"));
   if (!btn) return;
   const filter = btn.dataset.filter;
   if (activeFilters.has(filter)) activeFilters.delete(filter);
@@ -114,12 +175,14 @@ moreInfoBtn.addEventListener("click", () => {
   }
 });
 
+/** @returns {Promise<Pub[]>} */
 async function getPubsData() {
   if (pubsDataCache) return pubsDataCache;
   pubsDataCache = await loadPubsData();
   return pubsDataCache;
 }
 
+/** @returns {Promise<Pub[]>} */
 async function loadPubsData() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DATA_FETCH_TIMEOUT_MS);
@@ -215,6 +278,13 @@ async function runLocationSearch() {
   });
 }
 
+/**
+ * @param {Object} options
+ * @param {string} options.statusVerb
+ * @param {() => Promise<Origin>} options.resolveOrigin
+ * @param {string} options.label
+ * @param {(radiusMiles: number) => void} options.onSuccess
+ */
 async function performSearch({ statusVerb, resolveOrigin, label, onSuccess }) {
   const radiusMiles = parseFloat(radiusInput.value);
 
@@ -263,6 +333,7 @@ async function performSearch({ statusVerb, resolveOrigin, label, onSuccess }) {
   }
 }
 
+/** @returns {Promise<Origin>} */
 function geolocateUser() {
   return new Promise((resolve, reject) => {
     if (!("geolocation" in navigator)) {
@@ -283,6 +354,10 @@ function geolocateUser() {
   });
 }
 
+/**
+ * @param {Pub[]} pubs
+ * @returns {Pub[]}
+ */
 function applyPubFilters(pubs) {
   if (activeFilters.size === 0) return pubs;
   return pubs.filter(
@@ -294,6 +369,10 @@ function applyPubFilters(pubs) {
   );
 }
 
+/**
+ * @param {string} postcode
+ * @returns {Promise<Origin>}
+ */
 async function geocodePostcode(postcode) {
   const url = POSTCODES_API + encodeURIComponent(postcode.replace(/\s+/g, ""));
   const res = await fetch(url);
@@ -321,6 +400,10 @@ async function geocodePostcode(postcode) {
 // each other, keeping whichever copy has a usable address.
 const DEDUPE_DISTANCE_MILES = 0.05; // ~80m
 
+/**
+ * @param {Pub[]} pubs
+ * @returns {Pub[]}
+ */
 function dedupePubs(pubs) {
   const groups = new Map();
   for (const pub of pubs) {
@@ -351,6 +434,10 @@ function dedupePubs(pubs) {
   return deduped;
 }
 
+/**
+ * @param {Pub[]} cluster
+ * @returns {Pub}
+ */
 function pickBestOfCluster(cluster) {
   if (cluster.length === 1) return cluster[0];
   return cluster.slice().sort((a, b) => {
@@ -367,6 +454,12 @@ function pickBestOfCluster(cluster) {
 // set -- the full ~56k dataset is never copied, deduped, or sorted
 // wholesale on the common path. Falls back to the nearest few pubs overall
 // when nothing is in range.
+/**
+ * @param {Pub[]} allPubs
+ * @param {Origin} origin
+ * @param {number} radiusMiles
+ * @returns {{pubs: Pub[], isFallback: boolean}}
+ */
 function searchPubs(allPubs, origin, radiusMiles) {
   const withinRadius = [];
 
@@ -517,16 +610,17 @@ function showRandomPub() {
   showPub(pub);
 }
 
+/** @param {Pub} pub */
 function showPub(pub) {
   activePub = pub;
 
-  document.getElementById("pub-name").textContent = pub.name;
-  document.getElementById("pub-address").textContent = pub.address;
-  document.getElementById("pub-operator").textContent = pub.operator ? `Run by ${pub.operator}` : "";
-  document.getElementById("pub-operator").classList.toggle("hidden", !pub.operator);
+  getEl("pub-name").textContent = pub.name;
+  getEl("pub-address").textContent = pub.address;
+  getEl("pub-operator").textContent = pub.operator ? `Run by ${pub.operator}` : "";
+  getEl("pub-operator").classList.toggle("hidden", !pub.operator);
 
   const openStatus = getOpenStatus(pub.openingHours);
-  const openBadge = document.getElementById("pub-open-status");
+  const openBadge = getEl("pub-open-status");
   openBadge.classList.toggle("hidden", !openStatus);
   if (openStatus) {
     openBadge.textContent = openStatus === "open" ? "Open now" : "Closed now";
@@ -534,7 +628,7 @@ function showPub(pub) {
     openBadge.classList.toggle("closed", openStatus === "closed");
   }
 
-  document.getElementById("pub-distance").textContent =
+  getEl("pub-distance").textContent =
     typeof pub.distanceMiles === "number"
       ? `${pub.distanceMiles.toFixed(2)} miles away · ~${formatWalkTime(pub.distanceMiles)} walk`
       : "";
@@ -557,6 +651,7 @@ function showPub(pub) {
 // OSM tags) plus, when the pub has a linked Wikipedia article, a real
 // summary fetched from Wikipedia's free public API -- no API key, no AI,
 // no invented details about a real business.
+/** @param {Pub} pub */
 async function openMoreInfo(pub) {
   moreInfoPanel.classList.remove("hidden");
   moreInfoBtn.textContent = "Hide details";
@@ -593,6 +688,10 @@ async function openMoreInfo(pub) {
 
 // Only ever claims "Cash only" when a card tag is explicitly "no" -- an
 // untagged card status means we don't know, not that cards are refused.
+/**
+ * @param {Pub} pub
+ * @returns {string}
+ */
 function formatPayment(pub) {
   if (pub.paymentCardYes) return "Card accepted";
   if (pub.paymentCardNo && pub.paymentCash) return "Cash only";
@@ -600,6 +699,10 @@ function formatPayment(pub) {
   return "";
 }
 
+/**
+ * @param {Pub["wheelchair"]} value
+ * @returns {string}
+ */
 function formatWheelchairAccess(value) {
   if (value === "yes") return "Wheelchair accessible";
   if (value === "limited") return "Limited wheelchair access";
@@ -607,8 +710,9 @@ function formatWheelchairAccess(value) {
   return "";
 }
 
+/** @param {Pub} pub */
 function renderDescriptionAndPhoto(pub) {
-  const photoEl = document.getElementById("pub-photo");
+  const photoEl = /** @type {HTMLImageElement} */ (getEl("pub-photo"));
   if (pub.image) {
     photoEl.src = pub.image;
     photoEl.onerror = () => photoEl.classList.add("hidden");
@@ -618,13 +722,17 @@ function renderDescriptionAndPhoto(pub) {
     photoEl.removeAttribute("src");
   }
 
-  const descEl = document.getElementById("pub-description");
+  const descEl = getEl("pub-description");
   descEl.textContent = pub.description || "";
   descEl.classList.toggle("hidden", !pub.description);
 }
 
 // Returns the number of fact rows rendered, so the caller can tell whether
 // there's genuinely nothing to show for this pub.
+/**
+ * @param {Pub} pub
+ * @returns {number}
+ */
 function renderFacts(pub) {
   moreInfoFacts.innerHTML = "";
 
@@ -677,6 +785,7 @@ function renderFacts(pub) {
   return entries.length;
 }
 
+/** @param {{extract: string, url: string, thumbnail: string|null}} summary */
 function renderWikiSummary(summary) {
   wikiExtract.textContent = summary.extract;
   wikiLink.href = summary.url;
@@ -691,6 +800,10 @@ function renderWikiSummary(summary) {
 }
 
 // OSM's wikipedia tag format is "lang:Title", e.g. "en:Ye Olde Trip to Jerusalem".
+/**
+ * @param {string} wikipediaTag
+ * @returns {Promise<{extract: string, url: string, thumbnail: string|null}>}
+ */
 async function fetchWikipediaSummary(wikipediaTag) {
   const match = wikipediaTag.match(/^([a-z-]+):(.+)$/i);
   if (!match) throw new Error("Unrecognised wikipedia tag format");
@@ -758,11 +871,13 @@ function renderList() {
 function highlightActiveListItem() {
   if (!activePub) return;
   const activeKey = activePub.name + activePub.lat + activePub.lon;
-  for (const li of pubListEl.children) {
+  for (const child of pubListEl.children) {
+    const li = /** @type {HTMLElement} */ (child);
     li.classList.toggle("active", li.dataset.key === activeKey);
   }
 }
 
+/** @param {Pub} pub */
 function renderMap(pub) {
   if (!map) {
     map = L.map("map");
@@ -780,10 +895,15 @@ function renderMap(pub) {
   setTimeout(() => map.invalidateSize(), 100);
 }
 
+/**
+ * @param {Pub} pub
+ * @returns {string}
+ */
 function pubKey(pub) {
   return `${pub.name}|${pub.lat}|${pub.lon}`;
 }
 
+/** @returns {Pub[]} */
 function getFavourites() {
   try {
     return JSON.parse(localStorage.getItem(FAVOURITES_KEY)) || [];
@@ -792,6 +912,7 @@ function getFavourites() {
   }
 }
 
+/** @param {Pub[]} favourites */
 function saveFavourites(favourites) {
   try {
     localStorage.setItem(FAVOURITES_KEY, JSON.stringify(favourites));
@@ -801,11 +922,16 @@ function saveFavourites(favourites) {
   }
 }
 
+/**
+ * @param {Pub} pub
+ * @returns {boolean}
+ */
 function isFavourite(pub) {
   const key = pubKey(pub);
   return getFavourites().some((p) => pubKey(p) === key);
 }
 
+/** @param {Pub} pub */
 function toggleFavourite(pub) {
   const key = pubKey(pub);
   const favourites = getFavourites();
@@ -849,6 +975,7 @@ function toggleFavourite(pub) {
   if (!favouritesView.classList.contains("hidden")) renderFavouritesView();
 }
 
+/** @param {Pub} pub */
 function updateFavouriteButtonState(pub) {
   const saved = isFavourite(pub);
   favouriteBtn.textContent = saved ? "★ Saved" : "☆ Save";
@@ -941,13 +1068,14 @@ function loadSearchFromUrl() {
 
   postcodeInput.value = postcode;
   if (!Number.isNaN(radius) && radius >= minRadius && radius <= maxRadius) {
-    radiusInput.value = radius;
-    radiusValue.textContent = radius;
+    radiusInput.value = String(radius);
+    radiusValue.textContent = String(radius);
   }
 
   runSearch();
 }
 
+/** @returns {{postcode: string, radiusMiles: number}[]} */
 function getRecentSearches() {
   try {
     return JSON.parse(localStorage.getItem(RECENT_SEARCHES_KEY)) || [];
@@ -956,6 +1084,10 @@ function getRecentSearches() {
   }
 }
 
+/**
+ * @param {string} postcode
+ * @param {number} radiusMiles
+ */
 function recordRecentSearch(postcode, radiusMiles) {
   const normalised = postcode.trim().toUpperCase();
   let recent = getRecentSearches().filter((entry) => entry.postcode !== normalised);
@@ -988,8 +1120,8 @@ function renderRecentSearches() {
     btn.setAttribute("aria-pressed", btn.classList.contains("active") ? "true" : "false");
     btn.addEventListener("click", () => {
       postcodeInput.value = entry.postcode;
-      radiusInput.value = entry.radiusMiles;
-      radiusValue.textContent = entry.radiusMiles;
+      radiusInput.value = String(entry.radiusMiles);
+      radiusValue.textContent = String(entry.radiusMiles);
       runSearch();
     });
     recentSearchesEl.appendChild(btn);
