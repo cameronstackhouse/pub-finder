@@ -91,6 +91,7 @@ const wikiSummaryEl = getEl("wiki-summary");
 const wikiThumb = /** @type {HTMLImageElement} */ (getEl("wiki-thumb"));
 const wikiExtract = getEl("wiki-extract");
 const wikiLink = /** @type {HTMLAnchorElement} */ (getEl("wiki-link"));
+const osmEditLink = /** @type {HTMLAnchorElement} */ (getEl("osm-edit-link"));
 const favouriteBtn = /** @type {HTMLButtonElement} */ (getEl("favourite-btn"));
 const banBtn = /** @type {HTMLButtonElement} */ (getEl("ban-btn"));
 const tabSearchBtn = /** @type {HTMLButtonElement} */ (getEl("tab-search"));
@@ -771,6 +772,9 @@ async function openMoreInfo(pub) {
   const factCount = renderFacts(pub);
   renderDescription(pub);
   wikiSummaryEl.classList.add("hidden");
+  // Zoom 19 is close enough to land right on the pub building in the OSM
+  // editor without the user having to hunt for it themselves.
+  osmEditLink.href = `https://www.openstreetmap.org/edit#map=19/${pub.lat}/${pub.lon}`;
 
   const hasOwnContent = factCount > 0 || Boolean(pub.description);
 
