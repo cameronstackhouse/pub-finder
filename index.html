@@ -6,6 +6,9 @@
   <title>Pub Finder — random pub near you</title>
   <meta name="description" content="Find a random pub within a chosen radius of any UK postcode." />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🍺</text></svg>" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#a2361b" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -16,49 +19,66 @@
       <p>Enter a UK postcode and a search radius — we'll pick a random pub for you.</p>
     </header>
 
-    <form id="search-form" class="search-card">
-      <div class="field">
-        <label for="postcode">Postcode</label>
-        <input id="postcode" name="postcode" type="text" placeholder="e.g. SW1A 1AA" autocomplete="postal-code" required />
-      </div>
+    <div class="view-tabs" role="tablist">
+      <button id="tab-search" class="tab active" type="button" role="tab" aria-selected="true">Search</button>
+      <button id="tab-favourites" class="tab" type="button" role="tab" aria-selected="false">
+        Favourites <span id="favourites-count" class="badge hidden">0</span>
+      </button>
+    </div>
 
-      <div class="field">
-        <label for="radius">Radius: <span id="radius-value">2</span> miles</label>
-        <input id="radius" name="radius" type="range" min="0.5" max="15" step="0.5" value="2" />
-      </div>
-
-      <button id="submit-btn" type="submit">Find me a pub</button>
-    </form>
-
-    <section id="status" class="status" role="status" aria-live="polite"></section>
-
-    <section id="result" class="result hidden">
-      <div class="result-card">
-        <h2 id="pub-name"></h2>
-        <p id="pub-address" class="muted"></p>
-        <p id="pub-operator" class="muted hidden"></p>
-        <p id="pub-distance" class="muted"></p>
-        <div id="map"></div>
-        <div class="result-actions">
-          <button id="reroll-btn" type="button">Surprise me</button>
-          <button id="more-info-btn" type="button">Tell me more</button>
-          <a id="directions-link" href="#" target="_blank" rel="noopener">Get directions</a>
+    <div id="search-view">
+      <form id="search-form" class="search-card">
+        <div class="field">
+          <label for="postcode">Postcode</label>
+          <input id="postcode" name="postcode" type="text" placeholder="e.g. SW1A 1AA" autocomplete="postal-code" required />
         </div>
 
-        <div id="more-info" class="more-info hidden">
-          <p id="more-info-status" class="muted"></p>
-          <dl id="more-info-facts" class="more-info-facts"></dl>
-          <div id="wiki-summary" class="wiki-summary hidden">
-            <img id="wiki-thumb" class="wiki-thumb hidden" alt="" />
-            <p id="wiki-extract"></p>
-            <a id="wiki-link" href="#" target="_blank" rel="noopener">Read more on Wikipedia</a>
+        <div class="field">
+          <label for="radius">Radius: <span id="radius-value">2</span> miles</label>
+          <input id="radius" name="radius" type="range" min="0.5" max="15" step="0.5" value="2" />
+        </div>
+
+        <button id="submit-btn" type="submit">Find me a pub</button>
+      </form>
+
+      <div id="recent-searches" class="recent-searches hidden"></div>
+
+      <section id="status" class="status" role="status" aria-live="polite"></section>
+
+      <section id="result" class="result hidden">
+        <div class="result-card">
+          <h2 id="pub-name"></h2>
+          <p id="pub-address" class="muted"></p>
+          <p id="pub-operator" class="muted hidden"></p>
+          <p id="pub-distance" class="muted"></p>
+          <div id="map"></div>
+          <div class="result-actions">
+            <button id="favourite-btn" type="button" class="favourite-btn" aria-pressed="false">☆ Save</button>
+            <button id="reroll-btn" type="button">Surprise me</button>
+            <button id="more-info-btn" type="button">Tell me more</button>
+            <a id="directions-link" href="#" target="_blank" rel="noopener">Get directions</a>
+          </div>
+
+          <div id="more-info" class="more-info hidden">
+            <p id="more-info-status" class="muted"></p>
+            <dl id="more-info-facts" class="more-info-facts"></dl>
+            <div id="wiki-summary" class="wiki-summary hidden">
+              <img id="wiki-thumb" class="wiki-thumb hidden" alt="" />
+              <p id="wiki-extract"></p>
+              <a id="wiki-link" href="#" target="_blank" rel="noopener">Read more on Wikipedia</a>
+            </div>
           </div>
         </div>
-      </div>
 
-      <h3 id="list-heading" class="list-heading"></h3>
-      <ul id="pub-list" class="pub-list"></ul>
-    </section>
+        <h3 id="list-heading" class="list-heading"></h3>
+        <ul id="pub-list" class="pub-list"></ul>
+      </section>
+    </div>
+
+    <div id="favourites-view" class="hidden">
+      <p id="favourites-empty" class="muted">No favourites saved yet — find a pub and hit "☆ Save".</p>
+      <ul id="favourites-list" class="pub-list"></ul>
+    </div>
 
     <footer class="footer">
       <p>

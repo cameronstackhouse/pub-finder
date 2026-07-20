@@ -2,6 +2,9 @@ const POSTCODES_API = "https://api.postcodes.io/postcodes/";
 const PUBS_DATA_URL = "data/pubs-gb.json";
 const NEAREST_FALLBACK_COUNT = 5;
 const DATA_FETCH_TIMEOUT_MS = 20000;
+const FAVOURITES_KEY = "pubFinder.favourites";
+const RECENT_SEARCHES_KEY = "pubFinder.recentSearches";
+const RECENT_SEARCHES_MAX = 6;
 
 const form = document.getElementById("search-form");
 const postcodeInput = document.getElementById("postcode");
@@ -22,6 +25,15 @@ const wikiSummaryEl = document.getElementById("wiki-summary");
 const wikiThumb = document.getElementById("wiki-thumb");
 const wikiExtract = document.getElementById("wiki-extract");
 const wikiLink = document.getElementById("wiki-link");
+const favouriteBtn = document.getElementById("favourite-btn");
+const tabSearchBtn = document.getElementById("tab-search");
+const tabFavouritesBtn = document.getElementById("tab-favourites");
+const searchView = document.getElementById("search-view");
+const favouritesView = document.getElementById("favourites-view");
+const favouritesCountEl = document.getElementById("favourites-count");
+const favouritesListEl = document.getElementById("favourites-list");
+const favouritesEmptyEl = document.getElementById("favourites-empty");
+const recentSearchesEl = document.getElementById("recent-searches");
 
 let pubPool = [];
 let map = null;
@@ -35,9 +47,21 @@ let pubsDataCache = null;
 // so a one-off network blip on this warm-up doesn't permanently break every
 // later search (it used to, when the fetch promise itself was memoized).
 getPubsData().catch(() => {});
+registerServiceWorker();
+updateFavouritesBadge();
+renderRecentSearches();
 
 radiusInput.addEventListener("input", () => {
   radiusValue.textContent = radiusInput.value;
+});
+
+tabSearchBtn.addEventListener("click", () => switchView("search"));
+tabFavouritesBtn.addEventListener("click", () => switchView("favourites"));
+
+favouriteBtn.addEventListener("click", () => {
+  if (!activePub) return;
+  toggleFavourite(activePub);
+  updateFavouriteButtonState(activePub);
 });
 
 form.addEventListener("submit", async (e) => {
@@ -120,6 +144,7 @@ async function runSearch() {
 
     renderList();
     showRandomPub();
+    recordRecentSearch(postcode, radiusMiles);
   } catch (err) {
     console.error(err);
     setStatus(err.message || "Something went wrong. Please try again.");
@@ -256,12 +281,14 @@ function showPub(pub) {
   document.getElementById("pub-address").textContent = pub.address;
   document.getElementById("pub-operator").textContent = pub.operator ? `Run by ${pub.operator}` : "";
   document.getElementById("pub-operator").classList.toggle("hidden", !pub.operator);
-  document.getElementById("pub-distance").textContent = `${pub.distanceMiles.toFixed(2)} miles away`;
+  document.getElementById("pub-distance").textContent =
+    typeof pub.distanceMiles === "number" ? `${pub.distanceMiles.toFixed(2)} miles away` : "";
   directionsLink.href = `https://www.google.com/maps/dir/?api=1&destination=${pub.lat}%2C${pub.lon}`;
 
   resultSection.classList.remove("hidden");
   renderMap(pub);
   highlightActiveListItem();
+  updateFavouriteButtonState(pub);
 
   // Collapse any detail panel left open from the previous pub.
   moreInfoPanel.classList.add("hidden");
@@ -434,6 +461,169 @@ function renderMap(pub) {
   marker = L.marker([pub.lat, pub.lon]).addTo(map).bindPopup(pub.name).openPopup();
 
   setTimeout(() => map.invalidateSize(), 100);
+}
+
+function pubKey(pub) {
+  return `${pub.name}|${pub.lat}|${pub.lon}`;
+}
+
+function getFavourites() {
+  try {
+    return JSON.parse(localStorage.getItem(FAVOURITES_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveFavourites(favourites) {
+  try {
+    localStorage.setItem(FAVOURITES_KEY, JSON.stringify(favourites));
+  } catch {
+    // localStorage unavailable (private browsing, full quota, etc.) -- the
+    // star toggle just won't persist, nothing else in the app depends on it.
+  }
+}
+
+function isFavourite(pub) {
+  const key = pubKey(pub);
+  return getFavourites().some((p) => pubKey(p) === key);
+}
+
+function toggleFavourite(pub) {
+  const key = pubKey(pub);
+  const favourites = getFavourites();
+  const index = favourites.findIndex((p) => pubKey(p) === key);
+
+  if (index >= 0) {
+    favourites.splice(index, 1);
+  } else {
+    // Store only what's needed to redisplay this pub later -- distanceMiles
+    // is specific to whatever search produced it and isn't meaningful once saved.
+    favourites.push({
+      name: pub.name,
+      lat: pub.lat,
+      lon: pub.lon,
+      address: pub.address,
+      operator: pub.operator || "",
+      website: pub.website || "",
+      phone: pub.phone || "",
+      openingHours: pub.openingHours || "",
+      wikipedia: pub.wikipedia || "",
+    });
+  }
+
+  saveFavourites(favourites);
+  updateFavouritesBadge();
+  if (!favouritesView.classList.contains("hidden")) renderFavouritesView();
+}
+
+function updateFavouriteButtonState(pub) {
+  const saved = isFavourite(pub);
+  favouriteBtn.textContent = saved ? "★ Saved" : "☆ Save";
+  favouriteBtn.setAttribute("aria-pressed", String(saved));
+}
+
+function updateFavouritesBadge() {
+  const count = getFavourites().length;
+  favouritesCountEl.textContent = String(count);
+  favouritesCountEl.classList.toggle("hidden", count === 0);
+}
+
+function renderFavouritesView() {
+  const favourites = getFavourites();
+  favouritesListEl.innerHTML = "";
+  favouritesEmptyEl.classList.toggle("hidden", favourites.length > 0);
+
+  for (const pub of favourites) {
+    const li = document.createElement("li");
+
+    const info = document.createElement("span");
+    const name = document.createElement("span");
+    name.className = "pub-list-name";
+    name.textContent = pub.name;
+    const address = document.createElement("span");
+    address.className = "pub-list-address";
+    address.textContent = pub.operator ? `${pub.address} · ${pub.operator}` : pub.address;
+    info.appendChild(name);
+    info.appendChild(address);
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "pub-list-remove";
+    removeBtn.setAttribute("aria-label", `Remove ${pub.name} from favourites`);
+    removeBtn.textContent = "✕";
+    removeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleFavourite(pub);
+    });
+
+    li.appendChild(info);
+    li.appendChild(removeBtn);
+    li.addEventListener("click", () => {
+      switchView("search");
+      showPub(pub);
+    });
+
+    favouritesListEl.appendChild(li);
+  }
+}
+
+function switchView(view) {
+  const showSearch = view === "search";
+  searchView.classList.toggle("hidden", !showSearch);
+  favouritesView.classList.toggle("hidden", showSearch);
+  tabSearchBtn.classList.toggle("active", showSearch);
+  tabFavouritesBtn.classList.toggle("active", !showSearch);
+  tabSearchBtn.setAttribute("aria-selected", String(showSearch));
+  tabFavouritesBtn.setAttribute("aria-selected", String(!showSearch));
+  if (!showSearch) renderFavouritesView();
+}
+
+function getRecentSearches() {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_SEARCHES_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function recordRecentSearch(postcode, radiusMiles) {
+  const normalised = postcode.trim().toUpperCase();
+  let recent = getRecentSearches().filter((entry) => entry.postcode !== normalised);
+  recent.unshift({ postcode: normalised, radiusMiles });
+  recent = recent.slice(0, RECENT_SEARCHES_MAX);
+
+  try {
+    localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(recent));
+  } catch {
+    // ignore -- chips just won't persist
+  }
+
+  renderRecentSearches();
+}
+
+function renderRecentSearches() {
+  const recent = getRecentSearches();
+  recentSearchesEl.innerHTML = "";
+  recentSearchesEl.classList.toggle("hidden", recent.length === 0);
+
+  for (const entry of recent) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = `${entry.postcode} · ${entry.radiusMiles}mi`;
+    btn.addEventListener("click", () => {
+      postcodeInput.value = entry.postcode;
+      radiusInput.value = entry.radiusMiles;
+      radiusValue.textContent = entry.radiusMiles;
+      runSearch();
+    });
+    recentSearchesEl.appendChild(btn);
+  }
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.register("sw.js").catch((err) => console.warn("Service worker registration failed", err));
 }
 
 function setStatus(text) {

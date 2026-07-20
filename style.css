@@ -56,6 +56,73 @@ body {
   margin: 0;
 }
 
+.view-tabs {
+  display: flex;
+  gap: 0.4rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.3rem;
+  margin-bottom: 1.25rem;
+}
+
+.tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tab.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.badge {
+  display: inline-block;
+  min-width: 1.2rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.15);
+  font-size: 0.75rem;
+}
+
+.recent-searches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+
+.recent-searches button {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 999px;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.recent-searches button:hover {
+  border-color: var(--accent);
+}
+
+.favourite-btn {
+  background: var(--border) !important;
+  color: var(--fg) !important;
+}
+
+.favourite-btn[aria-pressed="true"] {
+  background: var(--accent) !important;
+  color: #fff !important;
+}
+
 .search-card {
   background: var(--card);
   border: 1px solid var(--border);
@@ -278,6 +345,24 @@ button,
   color: var(--muted);
   font-size: 0.85rem;
   white-space: nowrap;
+}
+
+.pub-list-remove {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.pub-list-remove:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .footer {

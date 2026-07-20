@@ -36,6 +36,7 @@ jobs:
           sed -i "s#style\.css\"#style.css?v=${SHORT_SHA}\"#" index.html
           sed -i "s#app\.js\"#app.js?v=${SHORT_SHA}\"#" index.html
           sed -i "s#data/pubs-gb\.json\"#data/pubs-gb.json?v=${SHORT_SHA}\"#" app.js
+          sed -i "s#__CACHE_VERSION__#${SHORT_SHA}#" sw.js
 
       - uses: actions/configure-pages@v5
         with:
