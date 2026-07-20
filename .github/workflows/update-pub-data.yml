@@ -27,11 +27,16 @@ jobs:
           osmium tags-filter gb.osm.pbf nwr/amenity=pub -o pubs.osm.pbf --overwrite
           osmium export pubs.osm.pbf -o pubs.geojson --overwrite
 
+      - name: Filter to coastline and export to GeoJSON
+        run: |
+          osmium tags-filter gb.osm.pbf w/natural=coastline -o coastline.osm.pbf --overwrite
+          osmium export coastline.osm.pbf -o coastline.geojson --overwrite
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - run: node scripts/build-pubs-data.mjs pubs.geojson
+      - run: node scripts/build-pubs-data.mjs pubs.geojson coastline.geojson
 
       - name: Commit if changed
         run: |

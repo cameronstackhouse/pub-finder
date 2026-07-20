@@ -152,6 +152,7 @@ async function loadPubsData() {
         startDate,
         darts,
         pool,
+        nearSea,
       ]) => ({
         name,
         lat,
@@ -176,6 +177,7 @@ async function loadPubsData() {
         startDate: startDate || "",
         darts: Boolean(darts),
         pool: Boolean(pool),
+        nearSea: Boolean(nearSea),
       })
     );
   } finally {
@@ -287,7 +289,8 @@ function applyPubFilters(pubs) {
     (pub) =>
       (!activeFilters.has("beerGarden") || pub.beerGarden) &&
       (!activeFilters.has("dogFriendly") || pub.dogFriendly) &&
-      (!activeFilters.has("foodServed") || pub.foodServed)
+      (!activeFilters.has("foodServed") || pub.foodServed) &&
+      (!activeFilters.has("nearSea") || pub.nearSea)
   );
 }
 
@@ -632,6 +635,7 @@ function renderFacts(pub) {
     pub.foodServed && "Food served",
     pub.darts && "Darts",
     pub.pool && "Pool table",
+    pub.nearSea && "Near the sea",
   ].filter(Boolean);
 
   const entries = [
@@ -836,6 +840,7 @@ function toggleFavourite(pub) {
       startDate: pub.startDate || "",
       darts: Boolean(pub.darts),
       pool: Boolean(pub.pool),
+      nearSea: Boolean(pub.nearSea),
     });
   }
 
