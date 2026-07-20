@@ -24,6 +24,14 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache-bust versioned assets
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          sed -i "s#style\.css\"#style.css?v=${SHORT_SHA}\"#" index.html
+          sed -i "s#app\.js\"#app.js?v=${SHORT_SHA}\"#" index.html
+          sed -i "s#data/pubs-gb\.json\"#data/pubs-gb.json?v=${SHORT_SHA}\"#" app.js
+
       - uses: actions/configure-pages@v5
         with:
           enablement: true
