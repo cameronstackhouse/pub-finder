@@ -195,7 +195,14 @@ for (const feature of geojson.features || []) {
   const [lon, lat] = centroid;
   if (typeof lat !== "number" || typeof lon !== "number") continue;
 
-  const name = tags.name || "Unnamed pub";
+  // Pubs with no name tag are dropped rather than kept as "Unnamed pub"
+  // placeholders: they're useless for "find me a pub" (nothing to tell the
+  // user to look for), and in practice they're overwhelmingly low-quality
+  // OSM entries -- only ~6% have a usable address either, versus ~81% of
+  // named pubs, and some carry obviously wrong tags (e.g. operator=Royal Mail).
+  const name = tags.name;
+  if (!name) continue;
+
   const roundedLat = Math.round(lat * 1e5) / 1e5;
   const roundedLon = Math.round(lon * 1e5) / 1e5;
 
