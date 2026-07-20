@@ -284,8 +284,12 @@ button,
   color: var(--muted);
 }
 
+/* !important is deliberate: .hidden is a state utility that must always win
+   regardless of specificity/source order against any component's own
+   display rule (an ID selector or a later-declared class previously beat it
+   here and left an element permanently visible despite being "hidden"). */
 .hidden {
-  display: none;
+  display: none !important;
 }
 
 .result-card {
@@ -503,7 +507,7 @@ button,
   color: var(--accent);
 }
 
-#crawl-view {
+.crawl-view {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
