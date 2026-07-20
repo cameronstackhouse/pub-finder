@@ -1,22 +1,16 @@
-// Fetches every OSM node/way tagged amenity=pub in Great Britain via the
-// Overpass API and writes a compact static dataset to data/pubs-gb.json.
-// Run from CI (GitHub Actions), not from the deployed app: this is a
-// periodic offline build step, not a per-request API call.
+// Converts a GeoJSON extract of Great Britain amenity=pub features (produced
+// in CI from a Geofabrik OSM extract via osmium-tool) into the compact
+// static dataset served by the app at data/pubs-gb.json.
+//
+// Usage: node scripts/build-pubs-data.mjs <path-to-pubs.geojson>
 
-const OVERPASS_ENDPOINTS = [
-  "https://overpass-api.de/api/interpreter",
-  "https://overpass.kumi.systems/api/interpreter",
-];
+import fs from "node:fs/promises";
 
-const QUERY = `
-  [out:json][timeout:180][maxsize:1073741824];
-  area["ISO3166-1"="GB"][admin_level=2]->.gb;
-  (
-    node["amenity"="pub"](area.gb);
-    way["amenity"="pub"](area.gb);
-  );
-  out center tags;
-`;
+const inputPath = process.argv[2];
+if (!inputPath) {
+  console.error("Usage: node scripts/build-pubs-data.mjs <path-to-pubs.geojson>");
+  process.exit(1);
+}
 
 function formatAddress(tags) {
   const parts = [
@@ -27,37 +21,58 @@ function formatAddress(tags) {
   return parts.length ? parts.join(", ") : "";
 }
 
-async function fetchFromAnyEndpoint() {
-  let lastErr;
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    try {
-      console.log(`Querying ${endpoint}...`);
-      const res = await fetch(endpoint, {
-        method: "POST",
-        body: "data=" + encodeURIComponent(QUERY),
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return await res.json();
-    } catch (err) {
-      console.warn(`Endpoint failed: ${endpoint} (${err.message})`);
-      lastErr = err;
+// GeoJSON coordinates are [lon, lat]. Ways/relations may come through as
+// LineString/Polygon/MultiPolygon; approximate their centroid by averaging
+// all ring/line points, which is more than accurate enough for a pub marker.
+function centroidOf(geometry) {
+  const points = [];
+
+  const collect = (coords, depth) => {
+    if (depth === 0) {
+      points.push(coords);
+      return;
     }
-  }
-  throw lastErr;
+    for (const c of coords) collect(c, depth - 1);
+  };
+
+  const depthByType = {
+    Point: 0,
+    LineString: 1,
+    MultiPoint: 1,
+    Polygon: 2,
+    MultiLineString: 2,
+    MultiPolygon: 3,
+  };
+
+  const depth = depthByType[geometry.type];
+  if (depth == null) return null;
+  collect(geometry.coordinates, depth);
+  if (points.length === 0) return null;
+
+  const [sumLon, sumLat] = points.reduce(
+    ([lonAcc, latAcc], [lon, lat]) => [lonAcc + lon, latAcc + lat],
+    [0, 0]
+  );
+  return [sumLon / points.length, sumLat / points.length];
 }
 
-const data = await fetchFromAnyEndpoint();
+const raw = await fs.readFile(inputPath, "utf8");
+const geojson = JSON.parse(raw);
 
 const seen = new Set();
 const rows = [];
 
-for (const el of data.elements || []) {
-  const lat = el.lat ?? el.center?.lat;
-  const lon = el.lon ?? el.center?.lon;
-  if (lat == null || lon == null) continue;
+for (const feature of geojson.features || []) {
+  const tags = feature.properties || {};
+  if (!feature.geometry) continue;
 
-  const tags = el.tags || {};
+  const centroid =
+    feature.geometry.type === "Point" ? feature.geometry.coordinates : centroidOf(feature.geometry);
+  if (!centroid) continue;
+
+  const [lon, lat] = centroid;
+  if (typeof lat !== "number" || typeof lon !== "number") continue;
+
   const name = tags.name || "Unnamed pub";
   const roundedLat = Math.round(lat * 1e5) / 1e5;
   const roundedLon = Math.round(lon * 1e5) / 1e5;
@@ -71,11 +86,7 @@ for (const el of data.elements || []) {
 
 rows.sort((a, b) => a[1] - b[1] || a[2] - b[2]);
 
-const fs = await import("node:fs/promises");
 await fs.mkdir(new URL("../data", import.meta.url), { recursive: true });
-await fs.writeFile(
-  new URL("../data/pubs-gb.json", import.meta.url),
-  JSON.stringify(rows)
-);
+await fs.writeFile(new URL("../data/pubs-gb.json", import.meta.url), JSON.stringify(rows));
 
 console.log(`Wrote ${rows.length} pubs to data/pubs-gb.json`);

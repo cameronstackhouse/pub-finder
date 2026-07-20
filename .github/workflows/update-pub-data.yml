@@ -14,11 +14,24 @@ jobs:
         with:
           ref: ${{ github.ref_name }}
 
+      - name: Install osmium-tool
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y osmium-tool
+
+      - name: Download Great Britain OSM extract
+        run: curl -fL -o gb.osm.pbf https://download.geofabrik.de/europe/great-britain-latest.osm.pbf
+
+      - name: Filter to amenity=pub and export to GeoJSON
+        run: |
+          osmium tags-filter gb.osm.pbf nwr/amenity=pub -o pubs.osm.pbf --overwrite
+          osmium export pubs.osm.pbf -o pubs.geojson --overwrite
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - run: node scripts/build-pubs-data.mjs
+      - run: node scripts/build-pubs-data.mjs pubs.geojson
 
       - name: Commit if changed
         run: |
