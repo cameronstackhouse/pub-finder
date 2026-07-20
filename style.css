@@ -684,3 +684,7 @@ button,
 .footer a {
   color: inherit;
 }
+
+#data-freshness {
+  margin-top: 0.4rem;
+}

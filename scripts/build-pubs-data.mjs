@@ -279,6 +279,14 @@ rows.sort((a, b) => a[1] - b[1] || a[2] - b[2]);
 await fs.mkdir(new URL("../data", import.meta.url), { recursive: true });
 await fs.writeFile(new URL("../data/pubs-gb.json", import.meta.url), JSON.stringify(rows));
 
+// A small companion file the app fetches to show "data last updated" --
+// keeping this honest and automatic (regenerated every time this script
+// runs) beats hardcoding a date that silently goes stale.
+await fs.writeFile(
+  new URL("../data/pubs-meta.json", import.meta.url),
+  JSON.stringify({ updatedAt: new Date().toISOString(), pubCount: rows.length })
+);
+
 console.log(`Wrote ${rows.length} pubs to data/pubs-gb.json`);
 if (coastlineGrid) {
   const nearSeaCount = rows.filter((r) => r[23] === "1").length;

@@ -106,6 +106,7 @@ const favouritesEmptyEl = getEl("favourites-empty");
 const bannedHeadingEl = getEl("banned-heading");
 const bannedListEl = getEl("banned-list");
 const recentSearchesEl = getEl("recent-searches");
+const dataFreshnessEl = getEl("data-freshness");
 const crawlForm = getEl("crawl-form");
 const crawlPostcodeInput = /** @type {HTMLInputElement} */ (getEl("crawl-postcode"));
 const crawlStopsInput = /** @type {HTMLInputElement} */ (getEl("crawl-stops"));
@@ -174,6 +175,7 @@ updateFavouritesBadge();
 renderRecentSearches();
 loadSearchFromUrl();
 applyTheme(getStoredTheme());
+loadDataFreshness().catch(() => {});
 
 radiusInput.addEventListener("input", () => {
   radiusValue.textContent = radiusInput.value;
@@ -1790,6 +1792,28 @@ function renderRecentSearches() {
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   navigator.serviceWorker.register("sw.js").catch((err) => console.warn("Service worker registration failed", err));
+}
+
+// Shows when the shipped dataset was last regenerated from OpenStreetMap,
+// so staleness is visible rather than silently assumed away. Sourced from a
+// small file build-pubs-data.mjs writes alongside pubs-gb.json every time
+// it runs, not a hardcoded date that would drift out of sync.
+async function loadDataFreshness() {
+  const res = await fetch("data/pubs-meta.json");
+  if (!res.ok) return;
+  const meta = await res.json();
+  if (!meta.updatedAt) return;
+
+  const formatted = new Date(meta.updatedAt).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+  const pubCount = typeof meta.pubCount === "number" ? meta.pubCount.toLocaleString("en-GB") : null;
+  dataFreshnessEl.textContent = pubCount
+    ? `Pub data last updated ${formatted} · ${pubCount} pubs`
+    : `Pub data last updated ${formatted}`;
+  dataFreshnessEl.classList.remove("hidden");
 }
 
 function getStoredTheme() {
