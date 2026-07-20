@@ -126,11 +126,60 @@ async function geocodePostcode(postcode) {
   };
 }
 
+// Same physical pub sometimes appears twice in the OSM data (e.g. a node
+// and a way both tagged amenity=pub for the same building). Address tags
+// are frequently missing on one of the two, so matching on name + address
+// text alone misses that case -- instead this groups by name and then
+// clusters entries of the same name that are within a few dozen metres of
+// each other, keeping whichever copy has a usable address.
+const DEDUPE_DISTANCE_MILES = 0.05; // ~80m
+
+function dedupePubs(pubs) {
+  const groups = new Map();
+  for (const pub of pubs) {
+    const key = pub.name.trim().toLowerCase();
+    const group = groups.get(key);
+    if (group) group.push(pub);
+    else groups.set(key, [pub]);
+  }
+
+  const deduped = [];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      deduped.push(group[0]);
+      continue;
+    }
+
+    const clusters = [];
+    for (const pub of group) {
+      const cluster = clusters.find(
+        (c) => haversineMiles(c[0].lat, c[0].lon, pub.lat, pub.lon) <= DEDUPE_DISTANCE_MILES
+      );
+      if (cluster) cluster.push(pub);
+      else clusters.push([pub]);
+    }
+    for (const cluster of clusters) deduped.push(pickBestOfCluster(cluster));
+  }
+
+  return deduped;
+}
+
+function pickBestOfCluster(cluster) {
+  if (cluster.length === 1) return cluster[0];
+  return cluster.slice().sort((a, b) => {
+    const aHasAddress = a.address === "Address not available" ? 1 : 0;
+    const bHasAddress = b.address === "Address not available" ? 1 : 0;
+    if (aHasAddress !== bHasAddress) return aHasAddress - bHasAddress;
+    return a.distanceMiles - b.distanceMiles;
+  })[0];
+}
+
 // Filters the full dataset down to pubs within radiusMiles of origin. Only
-// pubs that actually match get a distance-tagged copy allocated, and only
-// that (usually much smaller) matching set gets sorted -- the full ~56k
-// dataset is never copied or sorted wholesale on the common path. Falls
-// back to the nearest few pubs overall when nothing is in range.
+// pubs that actually match get a distance-tagged copy allocated, and
+// deduping/sorting only ever runs on that (usually much smaller) matching
+// set -- the full ~56k dataset is never copied, deduped, or sorted
+// wholesale on the common path. Falls back to the nearest few pubs overall
+// when nothing is in range.
 function searchPubs(allPubs, origin, radiusMiles) {
   const withinRadius = [];
 
@@ -142,14 +191,20 @@ function searchPubs(allPubs, origin, radiusMiles) {
   }
 
   if (withinRadius.length > 0) {
-    withinRadius.sort((a, b) => a.distanceMiles - b.distanceMiles);
-    return { pubs: withinRadius, isFallback: false };
+    const deduped = dedupePubs(withinRadius);
+    deduped.sort((a, b) => a.distanceMiles - b.distanceMiles);
+    return { pubs: deduped, isFallback: false };
   }
 
-  const nearest = allPubs
+  // Rare path (nothing in radius): grab more candidates than needed before
+  // deduping, rather than deduping the full dataset just to throw most of
+  // it away.
+  const nearestCandidates = allPubs
     .map((pub) => ({ ...pub, distanceMiles: haversineMiles(origin.lat, origin.lon, pub.lat, pub.lon) }))
     .sort((a, b) => a.distanceMiles - b.distanceMiles)
-    .slice(0, NEAREST_FALLBACK_COUNT);
+    .slice(0, NEAREST_FALLBACK_COUNT * 4);
+
+  const nearest = dedupePubs(nearestCandidates).slice(0, NEAREST_FALLBACK_COUNT);
 
   return { pubs: nearest, isFallback: true };
 }
