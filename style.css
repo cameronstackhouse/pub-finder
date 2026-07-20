@@ -126,7 +126,7 @@ button,
   color: var(--muted);
 }
 
-.result.hidden {
+.hidden {
   display: none;
 }
 

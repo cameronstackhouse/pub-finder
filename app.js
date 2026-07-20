@@ -55,11 +55,12 @@ async function loadPubsData() {
     const res = await fetch(PUBS_DATA_URL, { signal: controller.signal });
     if (!res.ok) throw new Error("bad status " + res.status);
     const rows = await res.json();
-    return rows.map(([name, lat, lon, address]) => ({
+    return rows.map(([name, lat, lon, address, operator]) => ({
       name,
       lat,
       lon,
       address: address || "Address not available",
+      operator: operator || "",
     }));
   } finally {
     clearTimeout(timeout);
@@ -231,6 +232,8 @@ function showPub(pub) {
 
   document.getElementById("pub-name").textContent = pub.name;
   document.getElementById("pub-address").textContent = pub.address;
+  document.getElementById("pub-operator").textContent = pub.operator ? `Run by ${pub.operator}` : "";
+  document.getElementById("pub-operator").classList.toggle("hidden", !pub.operator);
   document.getElementById("pub-distance").textContent = `${pub.distanceMiles.toFixed(2)} miles away`;
   directionsLink.href = `https://www.google.com/maps/dir/?api=1&destination=${pub.lat}%2C${pub.lon}`;
 
@@ -253,7 +256,7 @@ function renderList() {
     name.textContent = pub.name;
     const address = document.createElement("span");
     address.className = "pub-list-address";
-    address.textContent = pub.address;
+    address.textContent = pub.operator ? `${pub.address} · ${pub.operator}` : pub.address;
     info.appendChild(name);
     info.appendChild(address);
 

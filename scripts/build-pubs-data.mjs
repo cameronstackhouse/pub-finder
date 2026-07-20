@@ -81,7 +81,9 @@ for (const feature of geojson.features || []) {
   if (seen.has(key)) continue;
   seen.add(key);
 
-  rows.push([name, roundedLat, roundedLon, formatAddress(tags)]);
+  const operator = tags.operator || tags.brand || "";
+
+  rows.push([name, roundedLat, roundedLon, formatAddress(tags), operator]);
 }
 
 rows.sort((a, b) => a[1] - b[1] || a[2] - b[2]);
