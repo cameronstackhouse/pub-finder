@@ -996,14 +996,15 @@ function nearestCandidatePubs(allPubs, origin, poolSize) {
     .slice(0, poolSize);
 }
 
-// Picks which candidates become crawl stops. The deterministic pass builds
-// a chain outward from the start point, at each step preferring the nearest
-// not-yet-used pub within maxLegMiles (falling back to the nearest overall
-// if nothing qualifies) -- this keeps consecutive stops a plausible walk
-// apart rather than just taking the N closest to the start regardless of
-// how spread out they are. The randomised pass (for "Different pubs") just
-// samples from the candidate pool instead, since variety matters more than
-// leg length there.
+// Picks which candidates become crawl stops by building a chain outward
+// from the start point: at each step, narrow to not-yet-used pubs within
+// maxLegMiles of wherever the chain currently is (falling back to every
+// remaining candidate if none qualify, same as the deterministic pass, so
+// it still degrades honestly instead of silently dropping the constraint).
+// The deterministic pass then takes the nearest qualifying pub each time;
+// "Different pubs" instead picks randomly among the qualifying ones, so it
+// gets variety without abandoning the walk-distance limit the builder is
+// set to.
 /**
  * @param {Pub[]} candidates Nearest-first, already deduped.
  * @param {Origin} origin
@@ -1013,15 +1014,6 @@ function nearestCandidatePubs(allPubs, origin, poolSize) {
  * @returns {Pub[]}
  */
 function selectCrawlStops(candidates, origin, stopCount, maxLegMiles, randomize) {
-  if (randomize) {
-    const shuffled = candidates.slice();
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled.slice(0, stopCount);
-  }
-
   const remaining = candidates.slice();
   const chosen = [];
   let current = { lat: origin.lat, lon: origin.lon };
@@ -1030,17 +1022,22 @@ function selectCrawlStops(candidates, origin, stopCount, maxLegMiles, randomize)
     const within = remaining.filter((p) => haversineMiles(current.lat, current.lon, p.lat, p.lon) <= maxLegMiles);
     const pool = within.length > 0 ? within : remaining;
 
-    let bestIndex = 0;
-    let bestDist = Infinity;
-    for (let j = 0; j < pool.length; j++) {
-      const dist = haversineMiles(current.lat, current.lon, pool[j].lat, pool[j].lon);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestIndex = j;
+    let next;
+    if (randomize) {
+      next = pool[Math.floor(Math.random() * pool.length)];
+    } else {
+      let bestIndex = 0;
+      let bestDist = Infinity;
+      for (let j = 0; j < pool.length; j++) {
+        const dist = haversineMiles(current.lat, current.lon, pool[j].lat, pool[j].lon);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestIndex = j;
+        }
       }
+      next = pool[bestIndex];
     }
 
-    const next = pool[bestIndex];
     chosen.push(next);
     remaining.splice(remaining.indexOf(next), 1);
     current = next;
