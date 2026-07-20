@@ -3,6 +3,7 @@ const PUBS_DATA_URL = "data/pubs-gb.json";
 const NEAREST_FALLBACK_COUNT = 5;
 const DATA_FETCH_TIMEOUT_MS = 20000;
 const FAVOURITES_KEY = "pubFinder.favourites";
+const BANNED_PUBS_KEY = "pubFinder.bannedPubs";
 const RECENT_SEARCHES_KEY = "pubFinder.recentSearches";
 const THEME_KEY = "pubFinder.theme";
 const RECENT_SEARCHES_MAX = 6;
@@ -46,6 +47,16 @@ const WALK_SPEED_MPH = 3;
  */
 
 /**
+ * A pub identified just by name/lat/lon -- enough for pubKey() matching and
+ * to display in a manage list. Used for the banned-pubs store, which (like
+ * favourites) doesn't need the full Pub shape.
+ * @typedef {Object} BannedPub
+ * @property {string} name
+ * @property {number} lat
+ * @property {number} lon
+ */
+
+/**
  * Thin wrapper around document.getElementById that lets call sites cast to
  * the specific element subtype they need (all of these IDs are hardcoded in
  * our own index.html, so the element is guaranteed to exist and be of that
@@ -81,6 +92,7 @@ const wikiThumb = /** @type {HTMLImageElement} */ (getEl("wiki-thumb"));
 const wikiExtract = getEl("wiki-extract");
 const wikiLink = /** @type {HTMLAnchorElement} */ (getEl("wiki-link"));
 const favouriteBtn = /** @type {HTMLButtonElement} */ (getEl("favourite-btn"));
+const banBtn = /** @type {HTMLButtonElement} */ (getEl("ban-btn"));
 const tabSearchBtn = /** @type {HTMLButtonElement} */ (getEl("tab-search"));
 const tabCrawlBtn = /** @type {HTMLButtonElement} */ (getEl("tab-crawl"));
 const tabFavouritesBtn = /** @type {HTMLButtonElement} */ (getEl("tab-favourites"));
@@ -90,11 +102,15 @@ const favouritesView = getEl("favourites-view");
 const favouritesCountEl = getEl("favourites-count");
 const favouritesListEl = getEl("favourites-list");
 const favouritesEmptyEl = getEl("favourites-empty");
+const bannedHeadingEl = getEl("banned-heading");
+const bannedListEl = getEl("banned-list");
 const recentSearchesEl = getEl("recent-searches");
 const crawlForm = getEl("crawl-form");
 const crawlPostcodeInput = /** @type {HTMLInputElement} */ (getEl("crawl-postcode"));
 const crawlStopsInput = /** @type {HTMLInputElement} */ (getEl("crawl-stops"));
 const crawlStopsValue = getEl("crawl-stops-value");
+const crawlStartWalkInput = /** @type {HTMLInputElement} */ (getEl("crawl-start-walk"));
+const crawlStartWalkValue = getEl("crawl-start-walk-value");
 const crawlMaxLegInput = /** @type {HTMLInputElement} */ (getEl("crawl-max-leg"));
 const crawlMaxLegValue = getEl("crawl-max-leg-value");
 const crawlFilterChipsEl = getEl("crawl-filter-chips");
@@ -172,6 +188,20 @@ favouriteBtn.addEventListener("click", () => {
   updateFavouriteButtonState(activePub);
 });
 
+banBtn.addEventListener("click", () => {
+  if (!activePub) return;
+  banPub(activePub);
+  const bannedKey = pubKey(activePub);
+  pubPool = pubPool.filter((p) => pubKey(p) !== bannedKey);
+  renderList();
+  if (pubPool.length > 0) {
+    showRandomPub();
+  } else {
+    resultSection.classList.add("hidden");
+    setStatus("No more pubs match — try adjusting your filters or radius.");
+  }
+});
+
 locationBtn.addEventListener("click", () => {
   runLocationSearch();
 });
@@ -212,6 +242,13 @@ crawlLocationBtn.addEventListener("click", () => {
 crawlStopsInput.addEventListener("input", () => {
   crawlStopsValue.textContent = crawlStopsInput.value;
   if (crawlOrigin) buildAndRenderCrawl({ randomize: false });
+});
+
+crawlStartWalkInput.addEventListener("input", () => {
+  crawlStartWalkValue.textContent = crawlStartWalkInput.value;
+  // Changes the candidate pool itself (how far out we're willing to look),
+  // not just which of the existing candidates get picked -- needs a refetch.
+  if (crawlOrigin) refreshCrawlCandidates();
 });
 
 crawlMaxLegInput.addEventListener("input", () => {
@@ -375,7 +412,7 @@ async function performSearch({ statusVerb, resolveOrigin, label, onSuccess }) {
       }),
     ]);
 
-    const candidatePubs = applyPubFilters(allPubs, activeFilters);
+    const candidatePubs = excludeBannedPubs(applyPubFilters(allPubs, activeFilters));
     if (candidatePubs.length === 0) {
       setStatus("No pubs match your selected filters anywhere. Try turning one off.");
       pubPool = [];
@@ -1010,17 +1047,25 @@ async function refreshCrawlCandidates() {
 /** @returns {Promise<boolean>} */
 async function loadCrawlCandidates() {
   const stopCount = parseInt(crawlStopsInput.value, 10);
+  const startWalkMinutes = parseInt(crawlStartWalkInput.value, 10);
+  const maxStartDistanceMiles = (startWalkMinutes / 60) * WALK_SPEED_MPH;
+
   const allPubs = await getPubsData().catch(() => {
     throw new Error("Couldn't load the pub dataset. Please try again.");
   });
-  const filtered = applyPubFilters(allPubs, crawlActiveFilters);
-  const candidates = nearestCandidatePubs(filtered, /** @type {Origin} */ (crawlOrigin), Math.max(stopCount * 8, 30));
+  const filtered = excludeBannedPubs(applyPubFilters(allPubs, crawlActiveFilters));
+  const candidates = nearestCandidatePubs(
+    filtered,
+    /** @type {Origin} */ (crawlOrigin),
+    Math.max(stopCount * 8, 30),
+    maxStartDistanceMiles
+  );
 
   if (candidates.length === 0) {
     setCrawlStatus(
       crawlActiveFilters.size > 0
-        ? "No pubs match your filters near that start point. Try turning one off."
-        : "Couldn't find any pubs near that start point."
+        ? "No pubs match your filters within that walk of your start point. Try turning a filter off or increasing the walk time."
+        : `Couldn't find any pubs within a ${startWalkMinutes}-minute walk of that start point. Try increasing it.`
     );
     crawlResultEl.classList.add("hidden");
     return false;
@@ -1034,11 +1079,13 @@ async function loadCrawlCandidates() {
  * @param {Pub[]} allPubs
  * @param {Origin} origin
  * @param {number} poolSize
- * @returns {Pub[]} The `poolSize` nearest pubs to origin, deduped and sorted nearest-first.
+ * @param {number} maxDistanceMiles How far from origin a pub is allowed to be to even be considered.
+ * @returns {Pub[]} The `poolSize` nearest pubs to origin within maxDistanceMiles, deduped and sorted nearest-first.
  */
-function nearestCandidatePubs(allPubs, origin, poolSize) {
+function nearestCandidatePubs(allPubs, origin, poolSize, maxDistanceMiles) {
   const withDistance = allPubs
     .map((pub) => ({ ...pub, distanceMiles: haversineMiles(origin.lat, origin.lon, pub.lat, pub.lon) }))
+    .filter((pub) => pub.distanceMiles <= maxDistanceMiles)
     .sort((a, b) => a.distanceMiles - b.distanceMiles)
     .slice(0, poolSize * 4); // headroom before dedupe removes near-duplicate OSM entries
 
@@ -1116,29 +1163,47 @@ function* permutations(items) {
 }
 
 // Brute-forces the visiting order that minimises the full loop distance
-// (origin -> stops... -> origin). Crawls are capped at 6 stops, so that's
-// at most 720 permutations to check -- trivial -- and it means the route
-// actually loops back near the start instead of wandering off in one
-// direction and stranding you miles from home.
+// (origin -> stops... -> origin), same as a classic closed-loop TSP.
+// Crawls are capped at 6 stops, so that's at most 720 permutations to
+// check -- trivial.
+//
+// Minimising raw distance alone isn't enough though: the shortest-total
+// loop can still contain one long leg if that's what it takes to keep the
+// *sum* down, which is exactly the "insane distance" a max-leg limit is
+// supposed to prevent. So orderings that keep every leg (including the
+// walk back to the start) within maxLegMiles are strongly preferred --
+// only when no such ordering exists at all does it fall back to whichever
+// has the fewest/smallest violations, and those get flagged in the UI.
 /**
  * @param {Pub[]} stops
  * @param {Origin} origin
+ * @param {number} maxLegMiles
  * @returns {Pub[]}
  */
-function bestCircularOrder(stops, origin) {
+function bestCircularOrder(stops, origin, maxLegMiles) {
   let bestOrder = stops;
-  let bestDist = Infinity;
+  let bestCost = Infinity;
 
   for (const perm of permutations(stops)) {
     let dist = 0;
+    let violations = 0;
     let current = { lat: origin.lat, lon: origin.lon };
     for (const pub of perm) {
-      dist += haversineMiles(current.lat, current.lon, pub.lat, pub.lon);
+      const legDist = haversineMiles(current.lat, current.lon, pub.lat, pub.lon);
+      dist += legDist;
+      if (legDist > maxLegMiles) violations++;
       current = pub;
     }
-    dist += haversineMiles(current.lat, current.lon, origin.lat, origin.lon);
-    if (dist < bestDist) {
-      bestDist = dist;
+    const returnDist = haversineMiles(current.lat, current.lon, origin.lat, origin.lon);
+    dist += returnDist;
+    if (returnDist > maxLegMiles) violations++;
+
+    // Violations dominate the cost so a legal (if slightly longer) loop
+    // always beats an "shorter" one with an out-of-limit leg; distance only
+    // breaks ties among orderings with the same violation count.
+    const cost = violations * 1000 + dist;
+    if (cost < bestCost) {
+      bestCost = cost;
       bestOrder = perm;
     }
   }
@@ -1200,7 +1265,7 @@ function buildAndRenderCrawl({ randomize }) {
     remainingSlots > 0 ? selectCrawlStops(unlocked, crawlOrigin, remainingSlots, maxLegMiles, randomize) : [];
 
   const chosen = [...locked, ...additional];
-  const ordered = bestCircularOrder(chosen, crawlOrigin);
+  const ordered = bestCircularOrder(chosen, crawlOrigin, maxLegMiles);
   const { legs, returnMiles } = computeCrawlLegs(ordered, crawlOrigin);
 
   renderCrawlRoute(legs, returnMiles, maxLegMiles);
@@ -1280,9 +1345,22 @@ function renderCrawlRoute(legs, returnMiles, maxLegMiles) {
       updateCrawlLockBtn(lockBtn, leg.pub, nowLocked);
     });
 
+    const banStopBtn = document.createElement("button");
+    banStopBtn.type = "button";
+    banStopBtn.className = "crawl-ban-btn";
+    banStopBtn.textContent = "🚫";
+    banStopBtn.setAttribute("aria-label", `Ban ${leg.pub.name} so it never appears again`);
+    banStopBtn.addEventListener("click", () => {
+      banPub(leg.pub);
+      crawlCandidates = crawlCandidates.filter((p) => pubKey(p) !== key);
+      lockedStopKeys.delete(key);
+      buildAndRenderCrawl({ randomize: false });
+    });
+
     li.appendChild(num);
     li.appendChild(info);
     li.appendChild(lockBtn);
+    li.appendChild(banStopBtn);
     crawlRouteListEl.appendChild(li);
   });
 
@@ -1294,12 +1372,20 @@ function renderCrawlRoute(legs, returnMiles, maxLegMiles) {
   returnNum.className = "crawl-stop-num crawl-stop-num-return";
   returnNum.textContent = "🏁";
   const returnInfo = document.createElement("span");
+  returnInfo.className = "crawl-stop-info";
   const returnName = document.createElement("span");
   returnName.className = "pub-list-name";
   returnName.textContent = "Back to start";
   const returnLeg = document.createElement("span");
   returnLeg.className = "pub-list-address";
   returnLeg.textContent = `${returnMiles.toFixed(2)} mi · ~${formatWalkTime(returnMiles)}`;
+  if (returnMiles > maxLegMiles) {
+    returnLeg.textContent += " · ";
+    const warning = document.createElement("span");
+    warning.className = "crawl-leg-warning";
+    warning.textContent = "further than your walk limit";
+    returnLeg.appendChild(warning);
+  }
   returnInfo.appendChild(returnName);
   returnInfo.appendChild(returnLeg);
   returnLi.appendChild(returnNum);
@@ -1381,7 +1467,7 @@ function renderMap(pub) {
 }
 
 /**
- * @param {Pub} pub
+ * @param {BannedPub} pub
  * @returns {string}
  */
 function pubKey(pub) {
@@ -1521,6 +1607,84 @@ function renderFavouritesView() {
   }
 }
 
+// A pub the user never wants to see again, in search results or crawl
+// candidates. Stored minimally (just enough for pubKey matching and to
+// show a name in the manage list), same shape/rationale as favourites.
+/** @returns {BannedPub[]} */
+function getBannedPubs() {
+  try {
+    return JSON.parse(localStorage.getItem(BANNED_PUBS_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+
+/** @param {BannedPub[]} banned */
+function saveBannedPubs(banned) {
+  try {
+    localStorage.setItem(BANNED_PUBS_KEY, JSON.stringify(banned));
+  } catch {
+    // ignore -- banning just won't persist across visits
+  }
+}
+
+/** @param {Pub} pub */
+function banPub(pub) {
+  const key = pubKey(pub);
+  const banned = getBannedPubs();
+  if (banned.some((p) => pubKey(p) === key)) return;
+  banned.push({ name: pub.name, lat: pub.lat, lon: pub.lon });
+  saveBannedPubs(banned);
+  if (!favouritesView.classList.contains("hidden")) renderBannedListView();
+}
+
+/** @param {BannedPub} pub */
+function unbanPub(pub) {
+  const key = pubKey(pub);
+  saveBannedPubs(getBannedPubs().filter((p) => pubKey(p) !== key));
+  if (!favouritesView.classList.contains("hidden")) renderBannedListView();
+}
+
+/**
+ * @param {Pub[]} pubs
+ * @returns {Pub[]}
+ */
+function excludeBannedPubs(pubs) {
+  const banned = getBannedPubs();
+  if (banned.length === 0) return pubs;
+  const bannedKeys = new Set(banned.map(pubKey));
+  return pubs.filter((pub) => !bannedKeys.has(pubKey(pub)));
+}
+
+function renderBannedListView() {
+  const banned = getBannedPubs();
+  bannedListEl.innerHTML = "";
+  bannedHeadingEl.classList.toggle("hidden", banned.length === 0);
+  bannedListEl.classList.toggle("hidden", banned.length === 0);
+
+  for (const pub of banned) {
+    const li = document.createElement("li");
+
+    const name = document.createElement("span");
+    name.className = "pub-list-name";
+    name.textContent = pub.name;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "pub-list-remove";
+    removeBtn.setAttribute("aria-label", `Unban ${pub.name}`);
+    removeBtn.textContent = "✕";
+    removeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      unbanPub(pub);
+    });
+
+    li.appendChild(name);
+    li.appendChild(removeBtn);
+    bannedListEl.appendChild(li);
+  }
+}
+
 /** @param {"search"|"crawl"|"favourites"} view */
 function switchView(view) {
   searchView.classList.toggle("hidden", view !== "search");
@@ -1532,7 +1696,10 @@ function switchView(view) {
   tabSearchBtn.setAttribute("aria-selected", String(view === "search"));
   tabCrawlBtn.setAttribute("aria-selected", String(view === "crawl"));
   tabFavouritesBtn.setAttribute("aria-selected", String(view === "favourites"));
-  if (view === "favourites") renderFavouritesView();
+  if (view === "favourites") {
+    renderFavouritesView();
+    renderBannedListView();
+  }
 }
 
 // Keeps a postcode search bookmarkable/shareable without touching browser

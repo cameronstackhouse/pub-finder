@@ -65,6 +65,7 @@
           <div id="map"></div>
           <div class="result-actions">
             <button id="favourite-btn" type="button" class="favourite-btn" aria-pressed="false">☆ Save</button>
+            <button id="ban-btn" type="button" class="ban-btn">🚫 Not this one</button>
             <button id="reroll-btn" type="button">Surprise me</button>
             <button id="more-info-btn" type="button">Tell me more</button>
             <a id="directions-link" href="#" target="_blank" rel="noopener">Get directions</a>
@@ -100,6 +101,11 @@
         </div>
 
         <div class="field">
+          <label for="crawl-start-walk">Happy to walk to the first pub: <span id="crawl-start-walk-value">15</span> min</label>
+          <input id="crawl-start-walk" type="range" min="5" max="30" step="5" value="15" />
+        </div>
+
+        <div class="field">
           <label for="crawl-max-leg">Max walk between pubs: <span id="crawl-max-leg-value">0.5</span> miles</label>
           <input id="crawl-max-leg" type="range" min="0.2" max="1.5" step="0.1" value="0.5" />
         </div>
@@ -132,6 +138,9 @@
     <div id="favourites-view" class="hidden">
       <p id="favourites-empty" class="muted">No favourites saved yet — find a pub and hit "☆ Save".</p>
       <ul id="favourites-list" class="pub-list"></ul>
+
+      <h3 id="banned-heading" class="list-heading hidden">Banned pubs</h3>
+      <ul id="banned-list" class="pub-list"></ul>
     </div>
 
     <footer class="footer">
