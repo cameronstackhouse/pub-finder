@@ -192,6 +192,21 @@ button,
   cursor: default;
 }
 
+.location-btn {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--border);
+}
+
+.location-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.location-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .status {
   text-align: center;
   min-height: 1.4rem;

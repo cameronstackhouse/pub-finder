@@ -5,12 +5,14 @@ const DATA_FETCH_TIMEOUT_MS = 20000;
 const FAVOURITES_KEY = "pubFinder.favourites";
 const RECENT_SEARCHES_KEY = "pubFinder.recentSearches";
 const RECENT_SEARCHES_MAX = 6;
+const WALK_SPEED_MPH = 3;
 
 const form = document.getElementById("search-form");
 const postcodeInput = document.getElementById("postcode");
 const radiusInput = document.getElementById("radius");
 const radiusValue = document.getElementById("radius-value");
 const submitBtn = document.getElementById("submit-btn");
+const locationBtn = document.getElementById("location-btn");
 const statusEl = document.getElementById("status");
 const resultSection = document.getElementById("result");
 const rerollBtn = document.getElementById("reroll-btn");
@@ -51,6 +53,7 @@ getPubsData().catch(() => {});
 registerServiceWorker();
 updateFavouritesBadge();
 renderRecentSearches();
+loadSearchFromUrl();
 
 radiusInput.addEventListener("input", () => {
   radiusValue.textContent = radiusInput.value;
@@ -63,6 +66,10 @@ favouriteBtn.addEventListener("click", () => {
   if (!activePub) return;
   toggleFavourite(activePub);
   updateFavouriteButtonState(activePub);
+});
+
+locationBtn.addEventListener("click", () => {
+  runLocationSearch();
 });
 
 form.addEventListener("submit", async (e) => {
@@ -116,16 +123,44 @@ async function loadPubsData() {
 
 async function runSearch() {
   const postcode = postcodeInput.value.trim();
-  const radiusMiles = parseFloat(radiusInput.value);
   if (!postcode) return;
 
+  await performSearch({
+    statusVerb: "Looking up postcode…",
+    resolveOrigin: () => geocodePostcode(postcode),
+    label: postcode.toUpperCase(),
+    onSuccess: (radiusMiles) => {
+      recordRecentSearch(postcode, radiusMiles);
+      updateUrlForSearch(postcode, radiusMiles);
+    },
+  });
+}
+
+async function runLocationSearch() {
+  await performSearch({
+    statusVerb: "Finding your location…",
+    resolveOrigin: geolocateUser,
+    label: "your location",
+    onSuccess: () => {
+      // A geolocation search isn't a reusable postcode, so it doesn't get a
+      // recent-search chip or a shareable URL the way a postcode search does.
+      postcodeInput.value = "";
+      currentSearchKey = null;
+      renderRecentSearches();
+    },
+  });
+}
+
+async function performSearch({ statusVerb, resolveOrigin, label, onSuccess }) {
+  const radiusMiles = parseFloat(radiusInput.value);
+
   setBusy(true);
-  setStatus("Looking up postcode…");
+  setStatus(statusVerb);
   resultSection.classList.add("hidden");
 
   try {
     const [origin, allPubs] = await Promise.all([
-      geocodePostcode(postcode),
+      resolveOrigin(),
       getPubsData().catch(() => {
         // Not cached on failure -- the *next* search attempt will retry the fetch.
         throw new Error("Couldn't load the pub dataset. Please try again.");
@@ -139,13 +174,13 @@ async function runSearch() {
       setStatus(`Found ${pubPool.length} pub${pubPool.length === 1 ? "" : "s"} within ${radiusMiles} miles.`);
     } else {
       setStatus(
-        `No pubs within ${radiusMiles} miles of ${postcode.toUpperCase()} — showing the ${pubPool.length} closest instead.`
+        `No pubs within ${radiusMiles} miles of ${label} — showing the ${pubPool.length} closest instead.`
       );
     }
 
     renderList();
     showRandomPub();
-    recordRecentSearch(postcode, radiusMiles);
+    onSuccess(radiusMiles);
   } catch (err) {
     console.error(err);
     setStatus(err.message || "Something went wrong. Please try again.");
@@ -154,6 +189,26 @@ async function runSearch() {
   } finally {
     setBusy(false);
   }
+}
+
+function geolocateUser() {
+  return new Promise((resolve, reject) => {
+    if (!("geolocation" in navigator)) {
+      reject(new Error("Geolocation isn't supported by this browser. Enter a postcode instead."));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, label: "your location" }),
+      (err) => {
+        const message =
+          err.code === err.PERMISSION_DENIED
+            ? "Location access was denied. Enter a postcode instead."
+            : "Couldn't get your location. Enter a postcode instead.";
+        reject(new Error(message));
+      },
+      { timeout: 10000, maximumAge: 60000 }
+    );
+  });
 }
 
 async function geocodePostcode(postcode) {
@@ -270,6 +325,15 @@ function haversineMiles(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
+function formatWalkTime(distanceMiles) {
+  const totalMinutes = Math.round((distanceMiles / WALK_SPEED_MPH) * 60);
+  if (totalMinutes < 1) return "under a minute";
+  if (totalMinutes < 60) return `${totalMinutes} min`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+}
+
 function showRandomPub() {
   const pub = pubPool[Math.floor(Math.random() * pubPool.length)];
   showPub(pub);
@@ -283,7 +347,9 @@ function showPub(pub) {
   document.getElementById("pub-operator").textContent = pub.operator ? `Run by ${pub.operator}` : "";
   document.getElementById("pub-operator").classList.toggle("hidden", !pub.operator);
   document.getElementById("pub-distance").textContent =
-    typeof pub.distanceMiles === "number" ? `${pub.distanceMiles.toFixed(2)} miles away` : "";
+    typeof pub.distanceMiles === "number"
+      ? `${pub.distanceMiles.toFixed(2)} miles away · ~${formatWalkTime(pub.distanceMiles)} walk`
+      : "";
   directionsLink.href = `https://www.google.com/maps/dir/?api=1&destination=${pub.lat}%2C${pub.lon}`;
 
   resultSection.classList.remove("hidden");
@@ -429,7 +495,7 @@ function renderList() {
 
     const distance = document.createElement("span");
     distance.className = "pub-list-distance";
-    distance.textContent = `${pub.distanceMiles.toFixed(2)} mi`;
+    distance.textContent = `${pub.distanceMiles.toFixed(2)} mi · ~${formatWalkTime(pub.distanceMiles)}`;
 
     li.appendChild(info);
     li.appendChild(distance);
@@ -580,6 +646,34 @@ function switchView(view) {
   if (!showSearch) renderFavouritesView();
 }
 
+// Keeps a postcode search bookmarkable/shareable without touching browser
+// history on every search (replaceState, not pushState). Geolocation-based
+// searches deliberately don't get encoded here -- see runLocationSearch().
+function updateUrlForSearch(postcode, radiusMiles) {
+  const params = new URLSearchParams();
+  params.set("postcode", postcode);
+  params.set("radius", radiusMiles);
+  history.replaceState(null, "", `${location.pathname}?${params.toString()}`);
+}
+
+function loadSearchFromUrl() {
+  const params = new URLSearchParams(location.search);
+  const postcode = params.get("postcode");
+  if (!postcode) return;
+
+  const radius = parseFloat(params.get("radius"));
+  const minRadius = parseFloat(radiusInput.min);
+  const maxRadius = parseFloat(radiusInput.max);
+
+  postcodeInput.value = postcode;
+  if (!Number.isNaN(radius) && radius >= minRadius && radius <= maxRadius) {
+    radiusInput.value = radius;
+    radiusValue.textContent = radius;
+  }
+
+  runSearch();
+}
+
 function getRecentSearches() {
   try {
     return JSON.parse(localStorage.getItem(RECENT_SEARCHES_KEY)) || [];
@@ -640,4 +734,5 @@ function setStatus(text) {
 function setBusy(busy) {
   submitBtn.disabled = busy;
   submitBtn.textContent = busy ? "Searching…" : "Find me a pub";
+  locationBtn.disabled = busy;
 }
