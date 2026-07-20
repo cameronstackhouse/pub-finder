@@ -92,6 +92,28 @@ for (const feature of geojson.features || []) {
   const beerGarden = tags.beer_garden === "yes" || tags.outdoor_seating === "yes" ? "1" : "";
   const dogFriendly = tags.dog === "yes" || tags.dog === "leashed" ? "1" : "";
   const foodServed = tags.food === "yes" ? "1" : "";
+  const realAle = tags.real_ale === "yes" ? "1" : "";
+  const darts = tags.darts === "yes" ? "1" : "";
+  const pool = tags.pool === "yes" ? "1" : "";
+
+  // wheelchair keeps its raw value (yes/limited/no) since all three are
+  // meaningful to show, unlike the plain presence/absence flags above.
+  const wheelchair = ["yes", "limited", "no"].includes(tags.wheelchair) ? tags.wheelchair : "";
+
+  // Payment: cash accepted is a simple flag, but card acceptance needs two
+  // separate flags (an explicit "yes" vs an explicit "no") so the app can
+  // tell "known to accept cards", "known NOT to accept any card", and
+  // "we simply don't know" apart -- claiming "cash only" just because card
+  // tags are untagged would be a guess, not a fact.
+  const paymentCash = tags["payment:cash"] === "yes" ? "1" : "";
+  const cardTagValues = [tags["payment:credit_cards"], tags["payment:debit_cards"], tags["payment:contactless"]];
+  const paymentCardYes = cardTagValues.some((v) => v === "yes") ? "1" : "";
+  const paymentCardNo = !paymentCardYes && cardTagValues.some((v) => v === "no") ? "1" : "";
+
+  const description = (tags.description || "").trim().slice(0, 300);
+  const image = /^https?:\/\//i.test(tags.image || "") ? tags.image : "";
+  const listedStatus = tags.listed_status || "";
+  const startDate = tags.start_date || "";
 
   rows.push([
     name,
@@ -106,6 +128,17 @@ for (const feature of geojson.features || []) {
     beerGarden,
     dogFriendly,
     foodServed,
+    wheelchair,
+    realAle,
+    paymentCash,
+    paymentCardYes,
+    paymentCardNo,
+    description,
+    image,
+    listedStatus,
+    startDate,
+    darts,
+    pool,
   ]);
 }
 
