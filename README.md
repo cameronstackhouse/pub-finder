@@ -47,3 +47,17 @@ Runs automatically on push via `.github/workflows/typecheck.yml`. Scoped to
 `app.js` only for now (it's the file with the complex, shared `Pub` data
 shape); `scripts/build-pubs-data.mjs` runs in Node rather than the browser
 and hasn't been brought in yet.
+
+## End-to-end tests
+
+Playwright specs under `tests/` drive the built app in a real browser --
+search, favourites, banning, the crawl planner, tab switching -- with
+postcodes.io and the pub dataset mocked so runs are fast and deterministic:
+
+```sh
+npm install
+npx playwright install --with-deps chromium
+npm run test:e2e
+```
+
+Runs automatically on push via `.github/workflows/e2e-tests.yml`.
