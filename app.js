@@ -40,6 +40,7 @@ let map = null;
 let marker = null;
 let activePub = null;
 let pubsDataCache = null;
+let currentSearchKey = null;
 
 // Warm the cache immediately so it's ready (or already loaded) by the time
 // the user submits a search. Failures are intentionally not cached here --
@@ -599,6 +600,10 @@ function recordRecentSearch(postcode, radiusMiles) {
     // ignore -- chips just won't persist
   }
 
+  // Track which search is actually on screen so the matching chip can be
+  // marked -- previously nothing indicated which of several recent
+  // postcodes you were currently looking at.
+  currentSearchKey = `${normalised}|${radiusMiles}`;
   renderRecentSearches();
 }
 
@@ -611,6 +616,8 @@ function renderRecentSearches() {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = `${entry.postcode} · ${entry.radiusMiles}mi`;
+    btn.classList.toggle("active", `${entry.postcode}|${entry.radiusMiles}` === currentSearchKey);
+    btn.setAttribute("aria-pressed", btn.classList.contains("active") ? "true" : "false");
     btn.addEventListener("click", () => {
       postcodeInput.value = entry.postcode;
       radiusInput.value = entry.radiusMiles;

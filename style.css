@@ -113,6 +113,12 @@ body {
   border-color: var(--accent);
 }
 
+.recent-searches button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 .favourite-btn {
   background: var(--border) !important;
   color: var(--fg) !important;
