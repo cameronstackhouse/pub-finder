@@ -22,6 +22,7 @@
 
     <div class="view-tabs" role="tablist">
       <button id="tab-search" class="tab active" type="button" role="tab" aria-selected="true">Search</button>
+      <button id="tab-crawl" class="tab" type="button" role="tab" aria-selected="false">🍺 Crawl</button>
       <button id="tab-favourites" class="tab" type="button" role="tab" aria-selected="false">
         Favourites <span id="favourites-count" class="badge hidden">0</span>
       </button>
@@ -83,27 +84,40 @@
 
         <h3 id="list-heading" class="list-heading"></h3>
         <ul id="pub-list" class="pub-list"></ul>
+      </section>
+    </div>
 
-        <div id="crawl-section" class="crawl-section hidden">
-          <button id="crawl-toggle-btn" type="button" class="crawl-toggle-btn" aria-expanded="false">🍺 Plan a pub crawl</button>
+    <div id="crawl-view" class="hidden">
+      <form id="crawl-form" class="search-card">
+        <div class="field">
+          <label for="crawl-postcode">Starting postcode</label>
+          <input id="crawl-postcode" type="text" placeholder="e.g. SW1A 1AA" autocomplete="postal-code" />
+        </div>
 
-          <div id="crawl-panel" class="crawl-panel hidden">
-            <div class="field">
-              <label for="crawl-stops">Stops: <span id="crawl-stops-value">4</span></label>
-              <input id="crawl-stops" type="range" min="2" max="6" step="1" value="4" />
-            </div>
-            <div class="crawl-panel-actions">
-              <button id="build-crawl-btn" type="button">Build route</button>
-              <button id="shuffle-crawl-btn" type="button" class="crawl-secondary-btn hidden">🔀 Different pubs</button>
-            </div>
+        <div class="field">
+          <label for="crawl-stops">Number of pubs: <span id="crawl-stops-value">4</span></label>
+          <input id="crawl-stops" type="range" min="2" max="6" step="1" value="4" />
+        </div>
 
-            <div id="crawl-route" class="crawl-route hidden">
-              <ol id="crawl-route-list" class="crawl-route-list"></ol>
-              <p id="crawl-route-summary" class="muted"></p>
-              <div id="crawl-map"></div>
-              <a id="crawl-directions-link" href="#" target="_blank" rel="noopener">Get walking directions</a>
-            </div>
-          </div>
+        <div class="field">
+          <label for="crawl-max-leg">Max walk between pubs: <span id="crawl-max-leg-value">0.5</span> miles</label>
+          <input id="crawl-max-leg" type="range" min="0.2" max="1.5" step="0.1" value="0.5" />
+        </div>
+
+        <button id="crawl-submit-btn" type="submit">Plan my crawl</button>
+        <button id="crawl-location-btn" type="button" class="location-btn">📍 Use my location instead</button>
+      </form>
+
+      <section id="crawl-status" class="status" role="status" aria-live="polite"></section>
+
+      <section id="crawl-result" class="crawl-result search-card hidden">
+        <p id="crawl-origin-label" class="muted"></p>
+        <ol id="crawl-route-list" class="crawl-route-list"></ol>
+        <p id="crawl-route-summary" class="muted"></p>
+        <div id="crawl-map"></div>
+        <div class="crawl-route-actions">
+          <button id="shuffle-crawl-btn" type="button" class="crawl-secondary-btn">🔀 Different pubs</button>
+          <a id="crawl-directions-link" href="#" target="_blank" rel="noopener">Get walking directions</a>
         </div>
       </section>
     </div>

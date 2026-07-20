@@ -82,21 +82,27 @@ const wikiExtract = getEl("wiki-extract");
 const wikiLink = /** @type {HTMLAnchorElement} */ (getEl("wiki-link"));
 const favouriteBtn = /** @type {HTMLButtonElement} */ (getEl("favourite-btn"));
 const tabSearchBtn = /** @type {HTMLButtonElement} */ (getEl("tab-search"));
+const tabCrawlBtn = /** @type {HTMLButtonElement} */ (getEl("tab-crawl"));
 const tabFavouritesBtn = /** @type {HTMLButtonElement} */ (getEl("tab-favourites"));
 const searchView = getEl("search-view");
+const crawlView = getEl("crawl-view");
 const favouritesView = getEl("favourites-view");
 const favouritesCountEl = getEl("favourites-count");
 const favouritesListEl = getEl("favourites-list");
 const favouritesEmptyEl = getEl("favourites-empty");
 const recentSearchesEl = getEl("recent-searches");
-const crawlSection = getEl("crawl-section");
-const crawlToggleBtn = /** @type {HTMLButtonElement} */ (getEl("crawl-toggle-btn"));
-const crawlPanel = getEl("crawl-panel");
+const crawlForm = getEl("crawl-form");
+const crawlPostcodeInput = /** @type {HTMLInputElement} */ (getEl("crawl-postcode"));
 const crawlStopsInput = /** @type {HTMLInputElement} */ (getEl("crawl-stops"));
 const crawlStopsValue = getEl("crawl-stops-value");
-const buildCrawlBtn = /** @type {HTMLButtonElement} */ (getEl("build-crawl-btn"));
+const crawlMaxLegInput = /** @type {HTMLInputElement} */ (getEl("crawl-max-leg"));
+const crawlMaxLegValue = getEl("crawl-max-leg-value");
+const crawlSubmitBtn = /** @type {HTMLButtonElement} */ (getEl("crawl-submit-btn"));
+const crawlLocationBtn = /** @type {HTMLButtonElement} */ (getEl("crawl-location-btn"));
+const crawlStatusEl = getEl("crawl-status");
+const crawlResultEl = getEl("crawl-result");
+const crawlOriginLabelEl = getEl("crawl-origin-label");
 const shuffleCrawlBtn = /** @type {HTMLButtonElement} */ (getEl("shuffle-crawl-btn"));
-const crawlRouteEl = getEl("crawl-route");
 const crawlRouteListEl = getEl("crawl-route-list");
 const crawlRouteSummaryEl = getEl("crawl-route-summary");
 const crawlDirectionsLink = /** @type {HTMLAnchorElement} */ (getEl("crawl-directions-link"));
@@ -113,8 +119,14 @@ let activePub = null;
 let pubsDataCache = null;
 /** @type {string|null} */
 let currentSearchKey = null;
-/** @type {Origin|null} The origin of the most recent search, used as the starting point for a pub crawl route. */
-let lastOrigin = null;
+// The pub crawl planner is a self-contained flow with its own start point --
+// it deliberately doesn't reuse pubPool/the main search's origin, since a
+// crawl's "closest N, walkable between stops" candidate set is a different
+// shape of query to a plain radius search.
+/** @type {Origin|null} */
+let crawlOrigin = null;
+/** @type {Pub[]} Nearest deduped candidates around crawlOrigin, computed once per "Plan my crawl"/location request and re-used by the shuffle button. */
+let crawlCandidates = [];
 /** @type {any} Leaflet map instance for the crawl route; separate from `map` above. */
 let crawlMap = null;
 /** @type {any[]} Markers/polyline currently drawn on crawlMap, cleared and redrawn on each route rebuild. */
@@ -143,6 +155,7 @@ radiusInput.addEventListener("input", () => {
 });
 
 tabSearchBtn.addEventListener("click", () => switchView("search"));
+tabCrawlBtn.addEventListener("click", () => switchView("crawl"));
 tabFavouritesBtn.addEventListener("click", () => switchView("favourites"));
 
 favouriteBtn.addEventListener("click", () => {
@@ -177,22 +190,29 @@ form.addEventListener("submit", async (e) => {
   await runSearch();
 });
 
-crawlToggleBtn.addEventListener("click", () => {
-  const isOpen = !crawlPanel.classList.contains("hidden");
-  crawlPanel.classList.toggle("hidden", isOpen);
-  crawlToggleBtn.setAttribute("aria-expanded", String(!isOpen));
+crawlForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const postcode = crawlPostcodeInput.value.trim();
+  if (!postcode) return;
+  await runCrawlPlan({ resolveOrigin: () => geocodePostcode(postcode), statusVerb: "Looking up postcode…" });
+});
+
+crawlLocationBtn.addEventListener("click", () => {
+  runCrawlPlan({ resolveOrigin: geolocateUser, statusVerb: "Finding your location…" });
 });
 
 crawlStopsInput.addEventListener("input", () => {
   crawlStopsValue.textContent = crawlStopsInput.value;
+  if (crawlOrigin) buildAndRenderCrawl({ randomize: false });
 });
 
-buildCrawlBtn.addEventListener("click", () => {
-  renderCrawlRoute({ randomize: false });
+crawlMaxLegInput.addEventListener("input", () => {
+  crawlMaxLegValue.textContent = parseFloat(crawlMaxLegInput.value).toFixed(1);
+  if (crawlOrigin) buildAndRenderCrawl({ randomize: false });
 });
 
 shuffleCrawlBtn.addEventListener("click", () => {
-  renderCrawlRoute({ randomize: true });
+  buildAndRenderCrawl({ randomize: true });
 });
 
 rerollBtn.addEventListener("click", () => {
@@ -341,13 +361,11 @@ async function performSearch({ statusVerb, resolveOrigin, label, onSuccess }) {
       setStatus("No pubs match your selected filters anywhere. Try turning one off.");
       pubPool = [];
       pubListEl.innerHTML = "";
-      resetCrawlUi();
       return;
     }
 
     const { pubs, isFallback } = searchPubs(candidatePubs, origin, radiusMiles);
     pubPool = pubs;
-    lastOrigin = origin;
 
     if (!isFallback) {
       setStatus(`Found ${pubPool.length} pub${pubPool.length === 1 ? "" : "s"} within ${radiusMiles} miles.`);
@@ -358,7 +376,6 @@ async function performSearch({ statusVerb, resolveOrigin, label, onSuccess }) {
     }
 
     renderList();
-    resetCrawlUi();
     showRandomPub();
     onSuccess(radiusMiles);
   } catch (err) {
@@ -366,7 +383,6 @@ async function performSearch({ statusVerb, resolveOrigin, label, onSuccess }) {
     setStatus(err.message || "Something went wrong. Please try again.");
     pubPool = [];
     pubListEl.innerHTML = "";
-    resetCrawlUi();
   } finally {
     setBusy(false);
   }
@@ -911,104 +927,204 @@ function highlightActiveListItem() {
   }
 }
 
-// Resets the crawl builder/route back to its collapsed starting state
-// whenever the search results change -- a previously built route almost
-// certainly doesn't make sense against a new pub pool. Also caps the stops
-// slider at however many pubs are actually available (a crawl can't have
-// more stops than there are pubs in range).
-function resetCrawlUi() {
-  const canCrawl = pubPool.length >= 2;
-  crawlSection.classList.toggle("hidden", !canCrawl);
-  crawlPanel.classList.add("hidden");
-  crawlToggleBtn.setAttribute("aria-expanded", "false");
-  crawlRouteEl.classList.add("hidden");
-  shuffleCrawlBtn.classList.add("hidden");
+/** @param {boolean} busy */
+function setCrawlBusy(busy) {
+  crawlSubmitBtn.disabled = busy;
+  crawlSubmitBtn.textContent = busy ? "Planning…" : "Plan my crawl";
+  crawlLocationBtn.disabled = busy;
+}
 
-  if (!canCrawl) return;
+/** @param {string} text */
+function setCrawlStatus(text) {
+  crawlStatusEl.textContent = text;
+}
 
-  const maxStops = Math.min(6, pubPool.length);
-  crawlStopsInput.max = String(maxStops);
-  if (parseInt(crawlStopsInput.value, 10) > maxStops) {
-    crawlStopsInput.value = String(maxStops);
-    crawlStopsValue.textContent = String(maxStops);
+// Resolves a start point, then gathers the nearest candidate pubs around it
+// -- "nearest N" rather than a fixed search radius, so this always finds
+// candidates even in a sparse rural area instead of coming back empty.
+/**
+ * @param {Object} options
+ * @param {() => Promise<Origin>} options.resolveOrigin
+ * @param {string} options.statusVerb
+ */
+async function runCrawlPlan({ resolveOrigin, statusVerb }) {
+  const stopCount = parseInt(crawlStopsInput.value, 10);
+
+  setCrawlBusy(true);
+  setCrawlStatus(statusVerb);
+  crawlResultEl.classList.add("hidden");
+
+  try {
+    const [origin, allPubs] = await Promise.all([
+      resolveOrigin(),
+      getPubsData().catch(() => {
+        throw new Error("Couldn't load the pub dataset. Please try again.");
+      }),
+    ]);
+
+    const candidates = nearestCandidatePubs(allPubs, origin, Math.max(stopCount * 8, 30));
+    if (candidates.length === 0) {
+      setCrawlStatus("Couldn't find any pubs near that start point.");
+      return;
+    }
+
+    crawlOrigin = origin;
+    crawlCandidates = candidates;
+    buildAndRenderCrawl({ randomize: false });
+  } catch (err) {
+    console.error(err);
+    setCrawlStatus(err.message || "Something went wrong. Please try again.");
+  } finally {
+    setCrawlBusy(false);
   }
 }
 
-// A crawl route is picked from the nearest few candidates (not the whole
-// pool) so stops stay within reasonable walking distance of each other,
-// then optionally shuffled within that candidate set for variety.
-const CRAWL_CANDIDATE_MULTIPLIER = 3;
-const CRAWL_MIN_CANDIDATE_POOL = 12;
-
 /**
- * @param {Pub[]} pool Already sorted nearest-first (as pubPool always is).
+ * @param {Pub[]} allPubs
+ * @param {Origin} origin
+ * @param {number} poolSize
+ * @returns {Pub[]} The `poolSize` nearest pubs to origin, deduped and sorted nearest-first.
+ */
+function nearestCandidatePubs(allPubs, origin, poolSize) {
+  const withDistance = allPubs
+    .map((pub) => ({ ...pub, distanceMiles: haversineMiles(origin.lat, origin.lon, pub.lat, pub.lon) }))
+    .sort((a, b) => a.distanceMiles - b.distanceMiles)
+    .slice(0, poolSize * 4); // headroom before dedupe removes near-duplicate OSM entries
+
+  return dedupePubs(withDistance)
+    .sort((a, b) => a.distanceMiles - b.distanceMiles)
+    .slice(0, poolSize);
+}
+
+// Picks which candidates become crawl stops. The deterministic pass builds
+// a chain outward from the start point, at each step preferring the nearest
+// not-yet-used pub within maxLegMiles (falling back to the nearest overall
+// if nothing qualifies) -- this keeps consecutive stops a plausible walk
+// apart rather than just taking the N closest to the start regardless of
+// how spread out they are. The randomised pass (for "Different pubs") just
+// samples from the candidate pool instead, since variety matters more than
+// leg length there.
+/**
+ * @param {Pub[]} candidates Nearest-first, already deduped.
+ * @param {Origin} origin
  * @param {number} stopCount
+ * @param {number} maxLegMiles
  * @param {boolean} randomize
  * @returns {Pub[]}
  */
-function pickCrawlPubs(pool, stopCount, randomize) {
-  const candidateSize = Math.min(
-    pool.length,
-    Math.max(stopCount * CRAWL_CANDIDATE_MULTIPLIER, CRAWL_MIN_CANDIDATE_POOL)
-  );
-  const candidates = pool.slice(0, candidateSize);
-  if (!randomize) return candidates.slice(0, stopCount);
-
-  const shuffled = candidates.slice();
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+function selectCrawlStops(candidates, origin, stopCount, maxLegMiles, randomize) {
+  if (randomize) {
+    const shuffled = candidates.slice();
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled.slice(0, stopCount);
   }
-  return shuffled.slice(0, stopCount);
-}
 
-// Greedy nearest-neighbour ordering starting from the search origin. This
-// isn't solving travelling-salesman optimally, just avoiding an obviously
-// silly zig-zag route across a handful of stops.
-/**
- * @param {Pub[]} pubs
- * @param {Origin} origin
- * @returns {{pub: Pub, legMiles: number}[]}
- */
-function orderCrawlStops(pubs, origin) {
-  const remaining = pubs.slice();
-  const ordered = [];
+  const remaining = candidates.slice();
+  const chosen = [];
   let current = { lat: origin.lat, lon: origin.lon };
 
-  while (remaining.length > 0) {
+  for (let i = 0; i < stopCount && remaining.length > 0; i++) {
+    const within = remaining.filter((p) => haversineMiles(current.lat, current.lon, p.lat, p.lon) <= maxLegMiles);
+    const pool = within.length > 0 ? within : remaining;
+
     let bestIndex = 0;
     let bestDist = Infinity;
-    for (let i = 0; i < remaining.length; i++) {
-      const dist = haversineMiles(current.lat, current.lon, remaining[i].lat, remaining[i].lon);
+    for (let j = 0; j < pool.length; j++) {
+      const dist = haversineMiles(current.lat, current.lon, pool[j].lat, pool[j].lon);
       if (dist < bestDist) {
         bestDist = dist;
-        bestIndex = i;
+        bestIndex = j;
       }
     }
-    const [next] = remaining.splice(bestIndex, 1);
-    ordered.push({ pub: next, legMiles: bestDist });
-    current = { lat: next.lat, lon: next.lon };
+
+    const next = pool[bestIndex];
+    chosen.push(next);
+    remaining.splice(remaining.indexOf(next), 1);
+    current = next;
   }
 
-  return ordered;
+  return chosen;
+}
+
+/**
+ * @template T
+ * @param {T[]} items
+ * @returns {Generator<T[]>}
+ */
+function* permutations(items) {
+  if (items.length <= 1) {
+    yield items;
+    return;
+  }
+  for (let i = 0; i < items.length; i++) {
+    const rest = items.slice(0, i).concat(items.slice(i + 1));
+    for (const perm of permutations(rest)) {
+      yield [items[i], ...perm];
+    }
+  }
+}
+
+// Brute-forces the visiting order that minimises the full loop distance
+// (origin -> stops... -> origin). Crawls are capped at 6 stops, so that's
+// at most 720 permutations to check -- trivial -- and it means the route
+// actually loops back near the start instead of wandering off in one
+// direction and stranding you miles from home.
+/**
+ * @param {Pub[]} stops
+ * @param {Origin} origin
+ * @returns {Pub[]}
+ */
+function bestCircularOrder(stops, origin) {
+  let bestOrder = stops;
+  let bestDist = Infinity;
+
+  for (const perm of permutations(stops)) {
+    let dist = 0;
+    let current = { lat: origin.lat, lon: origin.lon };
+    for (const pub of perm) {
+      dist += haversineMiles(current.lat, current.lon, pub.lat, pub.lon);
+      current = pub;
+    }
+    dist += haversineMiles(current.lat, current.lon, origin.lat, origin.lon);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestOrder = perm;
+    }
+  }
+
+  return bestOrder;
+}
+
+/**
+ * @param {Pub[]} stops
+ * @param {Origin} origin
+ * @returns {{legs: {pub: Pub, legMiles: number}[], returnMiles: number}}
+ */
+function computeCrawlLegs(stops, origin) {
+  const legs = [];
+  let current = { lat: origin.lat, lon: origin.lon };
+  for (const pub of stops) {
+    legs.push({ pub, legMiles: haversineMiles(current.lat, current.lon, pub.lat, pub.lon) });
+    current = pub;
+  }
+  const returnMiles = haversineMiles(current.lat, current.lon, origin.lat, origin.lon);
+  return { legs, returnMiles };
 }
 
 /**
  * @param {Origin} origin
  * @param {Pub[]} stops
- * @returns {string} A Google Maps multi-stop walking directions URL -- free, no API key.
+ * @returns {string} A Google Maps multi-stop walking directions URL, looping back to the start -- free, no API key.
  */
 function buildCrawlDirectionsUrl(origin, stops) {
-  const last = stops[stops.length - 1];
-  const waypoints = stops
-    .slice(0, -1)
-    .map((p) => `${p.lat},${p.lon}`)
-    .join("|");
-
+  const waypoints = stops.map((p) => `${p.lat},${p.lon}`).join("|");
   const params = new URLSearchParams({
     api: "1",
     origin: `${origin.lat},${origin.lon}`,
-    destination: `${last.lat},${last.lon}`,
+    destination: `${origin.lat},${origin.lon}`,
     travelmode: "walking",
   });
   if (waypoints) params.set("waypoints", waypoints);
@@ -1017,17 +1133,39 @@ function buildCrawlDirectionsUrl(origin, stops) {
 }
 
 /** @param {{randomize: boolean}} options */
-function renderCrawlRoute({ randomize }) {
-  if (!lastOrigin || pubPool.length < 2) return;
+function buildAndRenderCrawl({ randomize }) {
+  if (!crawlOrigin || crawlCandidates.length === 0) return;
 
-  const stopCount = parseInt(crawlStopsInput.value, 10);
-  const chosen = pickCrawlPubs(pubPool, stopCount, randomize);
-  const stops = orderCrawlStops(chosen, lastOrigin);
+  const requestedStops = parseInt(crawlStopsInput.value, 10);
+  const stopCount = Math.min(requestedStops, crawlCandidates.length);
+  const maxLegMiles = parseFloat(crawlMaxLegInput.value);
 
+  const chosen = selectCrawlStops(crawlCandidates, crawlOrigin, stopCount, maxLegMiles, randomize);
+  const ordered = bestCircularOrder(chosen, crawlOrigin);
+  const { legs, returnMiles } = computeCrawlLegs(ordered, crawlOrigin);
+
+  renderCrawlRoute(legs, returnMiles, maxLegMiles);
+
+  crawlOriginLabelEl.textContent = `Starting from ${crawlOrigin.label}`;
+  setCrawlStatus(
+    chosen.length < requestedStops
+      ? `Only found ${chosen.length} pub${chosen.length === 1 ? "" : "s"} nearby.`
+      : ""
+  );
+  crawlResultEl.classList.remove("hidden");
+}
+
+/**
+ * @param {{pub: Pub, legMiles: number}[]} legs
+ * @param {number} returnMiles
+ * @param {number} maxLegMiles
+ */
+function renderCrawlRoute(legs, returnMiles, maxLegMiles) {
   crawlRouteListEl.innerHTML = "";
   let totalMiles = 0;
-  stops.forEach((stop, index) => {
-    totalMiles += stop.legMiles;
+
+  legs.forEach((leg, index) => {
+    totalMiles += leg.legMiles;
 
     const li = document.createElement("li");
     const num = document.createElement("span");
@@ -1037,36 +1175,54 @@ function renderCrawlRoute({ randomize }) {
     const info = document.createElement("span");
     const name = document.createElement("span");
     name.className = "pub-list-name";
-    name.textContent = stop.pub.name;
-    const leg = document.createElement("span");
-    leg.className = "pub-list-address";
-    leg.textContent = `${stop.legMiles.toFixed(2)} mi from ${
+    name.textContent = leg.pub.name;
+    const legInfo = document.createElement("span");
+    legInfo.className = "pub-list-address";
+    legInfo.textContent = `${leg.legMiles.toFixed(2)} mi from ${
       index === 0 ? "start" : "previous stop"
-    } · ~${formatWalkTime(stop.legMiles)}`;
+    } · ~${formatWalkTime(leg.legMiles)}`;
+    if (leg.legMiles > maxLegMiles) {
+      legInfo.textContent += " · ";
+      const warning = document.createElement("span");
+      warning.className = "crawl-leg-warning";
+      warning.textContent = "further than your walk limit";
+      legInfo.appendChild(warning);
+    }
     info.appendChild(name);
-    info.appendChild(leg);
+    info.appendChild(legInfo);
 
     li.appendChild(num);
     li.appendChild(info);
     crawlRouteListEl.appendChild(li);
   });
 
-  crawlRouteSummaryEl.textContent = `${stops.length} stops · ${totalMiles.toFixed(
+  totalMiles += returnMiles;
+
+  const returnLi = document.createElement("li");
+  returnLi.className = "crawl-return-row";
+  const returnNum = document.createElement("span");
+  returnNum.className = "crawl-stop-num crawl-stop-num-return";
+  returnNum.textContent = "🏁";
+  const returnInfo = document.createElement("span");
+  const returnName = document.createElement("span");
+  returnName.className = "pub-list-name";
+  returnName.textContent = "Back to start";
+  const returnLeg = document.createElement("span");
+  returnLeg.className = "pub-list-address";
+  returnLeg.textContent = `${returnMiles.toFixed(2)} mi · ~${formatWalkTime(returnMiles)}`;
+  returnInfo.appendChild(returnName);
+  returnInfo.appendChild(returnLeg);
+  returnLi.appendChild(returnNum);
+  returnLi.appendChild(returnInfo);
+  crawlRouteListEl.appendChild(returnLi);
+
+  crawlRouteSummaryEl.textContent = `${legs.length} stops · ${totalMiles.toFixed(
     2
-  )} miles walking · ~${formatWalkTime(totalMiles)} total`;
+  )} miles round trip · ~${formatWalkTime(totalMiles)} walking total`;
 
-  crawlDirectionsLink.href = buildCrawlDirectionsUrl(
-    lastOrigin,
-    stops.map((s) => s.pub)
-  );
-
-  renderCrawlMap(
-    lastOrigin,
-    stops.map((s) => s.pub)
-  );
-
-  crawlRouteEl.classList.remove("hidden");
-  shuffleCrawlBtn.classList.remove("hidden");
+  const stops = legs.map((l) => l.pub);
+  crawlDirectionsLink.href = buildCrawlDirectionsUrl(/** @type {Origin} */ (crawlOrigin), stops);
+  renderCrawlMap(/** @type {Origin} */ (crawlOrigin), stops);
 }
 
 /**
@@ -1085,10 +1241,8 @@ function renderCrawlMap(origin, stops) {
   for (const layer of crawlMapLayers) layer.remove();
   crawlMapLayers = [];
 
-  const points = [
-    [origin.lat, origin.lon],
-    ...stops.map((p) => [p.lat, p.lon]),
-  ];
+  // Origin appears at both ends so the polyline visually closes the loop.
+  const points = [[origin.lat, origin.lon], ...stops.map((p) => [p.lat, p.lon]), [origin.lat, origin.lon]];
 
   const startMarker = L.circleMarker([origin.lat, origin.lon], {
     radius: 8,
@@ -1277,15 +1431,18 @@ function renderFavouritesView() {
   }
 }
 
+/** @param {"search"|"crawl"|"favourites"} view */
 function switchView(view) {
-  const showSearch = view === "search";
-  searchView.classList.toggle("hidden", !showSearch);
-  favouritesView.classList.toggle("hidden", showSearch);
-  tabSearchBtn.classList.toggle("active", showSearch);
-  tabFavouritesBtn.classList.toggle("active", !showSearch);
-  tabSearchBtn.setAttribute("aria-selected", String(showSearch));
-  tabFavouritesBtn.setAttribute("aria-selected", String(!showSearch));
-  if (!showSearch) renderFavouritesView();
+  searchView.classList.toggle("hidden", view !== "search");
+  crawlView.classList.toggle("hidden", view !== "crawl");
+  favouritesView.classList.toggle("hidden", view !== "favourites");
+  tabSearchBtn.classList.toggle("active", view === "search");
+  tabCrawlBtn.classList.toggle("active", view === "crawl");
+  tabFavouritesBtn.classList.toggle("active", view === "favourites");
+  tabSearchBtn.setAttribute("aria-selected", String(view === "search"));
+  tabCrawlBtn.setAttribute("aria-selected", String(view === "crawl"));
+  tabFavouritesBtn.setAttribute("aria-selected", String(view === "favourites"));
+  if (view === "favourites") renderFavouritesView();
 }
 
 // Keeps a postcode search bookmarkable/shareable without touching browser

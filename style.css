@@ -470,7 +470,8 @@ button,
   font-weight: 600;
 }
 
-.pub-list .pub-list-address {
+.pub-list .pub-list-address,
+.crawl-route-list .pub-list-address {
   display: block;
   font-weight: 400;
   font-size: 0.85rem;
@@ -502,55 +503,13 @@ button,
   color: var(--accent);
 }
 
-.crawl-section {
-  margin-top: 1.5rem;
-}
-
-.crawl-toggle-btn {
-  width: 100%;
-  background: var(--card);
-  border: 1px dashed var(--border);
-  color: var(--accent);
-}
-
-.crawl-toggle-btn:hover {
-  border-color: var(--accent);
-}
-
-.crawl-panel {
-  margin-top: 0.75rem;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 1.25rem;
+#crawl-view {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.25rem;
 }
 
-.crawl-panel-actions {
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.crawl-panel-actions button {
-  flex: 1;
-}
-
-#build-crawl-btn {
-  background: var(--accent);
-  color: #fff;
-}
-
-.crawl-secondary-btn {
-  background: var(--border);
-  color: var(--fg);
-}
-
-.crawl-route {
-  border-top: 1px solid var(--border);
-  padding-top: 1rem;
+.crawl-result {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -575,6 +534,10 @@ button,
   padding: 0.6rem 0.8rem;
 }
 
+.crawl-route-list li.crawl-return-row {
+  border-style: dashed;
+}
+
 .crawl-stop-num {
   flex-shrink: 0;
   width: 1.6rem;
@@ -587,6 +550,31 @@ button,
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.crawl-stop-num-return {
+  background: var(--muted);
+  font-size: 0.9rem;
+}
+
+.crawl-leg-warning {
+  color: var(--accent);
+}
+
+.crawl-route-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.crawl-route-actions button,
+.crawl-route-actions a {
+  flex: 1;
+}
+
+.crawl-secondary-btn {
+  background: var(--border);
+  color: var(--fg);
 }
 
 #crawl-map {
