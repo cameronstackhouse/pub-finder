@@ -4,6 +4,7 @@ const NEAREST_FALLBACK_COUNT = 5;
 const DATA_FETCH_TIMEOUT_MS = 20000;
 const FAVOURITES_KEY = "pubFinder.favourites";
 const RECENT_SEARCHES_KEY = "pubFinder.recentSearches";
+const THEME_KEY = "pubFinder.theme";
 const RECENT_SEARCHES_MAX = 6;
 const WALK_SPEED_MPH = 3;
 
@@ -13,6 +14,8 @@ const radiusInput = document.getElementById("radius");
 const radiusValue = document.getElementById("radius-value");
 const submitBtn = document.getElementById("submit-btn");
 const locationBtn = document.getElementById("location-btn");
+const themeToggleBtn = document.getElementById("theme-toggle");
+const filterChipsEl = document.getElementById("filter-chips");
 const statusEl = document.getElementById("status");
 const resultSection = document.getElementById("result");
 const rerollBtn = document.getElementById("reroll-btn");
@@ -43,6 +46,7 @@ let marker = null;
 let activePub = null;
 let pubsDataCache = null;
 let currentSearchKey = null;
+const activeFilters = new Set(); // subset of "beerGarden" | "dogFriendly" | "foodServed"
 
 // Warm the cache immediately so it's ready (or already loaded) by the time
 // the user submits a search. Failures are intentionally not cached here --
@@ -54,6 +58,7 @@ registerServiceWorker();
 updateFavouritesBadge();
 renderRecentSearches();
 loadSearchFromUrl();
+applyTheme(getStoredTheme());
 
 radiusInput.addEventListener("input", () => {
   radiusValue.textContent = radiusInput.value;
@@ -70,6 +75,23 @@ favouriteBtn.addEventListener("click", () => {
 
 locationBtn.addEventListener("click", () => {
   runLocationSearch();
+});
+
+themeToggleBtn.addEventListener("click", () => {
+  const order = ["auto", "light", "dark"];
+  const next = order[(order.indexOf(getStoredTheme()) + 1) % order.length];
+  setStoredTheme(next);
+  applyTheme(next);
+});
+
+filterChipsEl.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-filter]");
+  if (!btn) return;
+  const filter = btn.dataset.filter;
+  if (activeFilters.has(filter)) activeFilters.delete(filter);
+  else activeFilters.add(filter);
+  btn.classList.toggle("active", activeFilters.has(filter));
+  btn.setAttribute("aria-pressed", activeFilters.has(filter) ? "true" : "false");
 });
 
 form.addEventListener("submit", async (e) => {
@@ -105,17 +127,22 @@ async function loadPubsData() {
     const res = await fetch(PUBS_DATA_URL, { signal: controller.signal });
     if (!res.ok) throw new Error("bad status " + res.status);
     const rows = await res.json();
-    return rows.map(([name, lat, lon, address, operator, website, phone, openingHours, wikipedia]) => ({
-      name,
-      lat,
-      lon,
-      address: address || "Address not available",
-      operator: operator || "",
-      website: website || "",
-      phone: phone || "",
-      openingHours: openingHours || "",
-      wikipedia: wikipedia || "",
-    }));
+    return rows.map(
+      ([name, lat, lon, address, operator, website, phone, openingHours, wikipedia, beerGarden, dogFriendly, foodServed]) => ({
+        name,
+        lat,
+        lon,
+        address: address || "Address not available",
+        operator: operator || "",
+        website: website || "",
+        phone: phone || "",
+        openingHours: openingHours || "",
+        wikipedia: wikipedia || "",
+        beerGarden: Boolean(beerGarden),
+        dogFriendly: Boolean(dogFriendly),
+        foodServed: Boolean(foodServed),
+      })
+    );
   } finally {
     clearTimeout(timeout);
   }
@@ -167,14 +194,22 @@ async function performSearch({ statusVerb, resolveOrigin, label, onSuccess }) {
       }),
     ]);
 
-    const { pubs, isFallback } = searchPubs(allPubs, origin, radiusMiles);
+    const candidatePubs = applyPubFilters(allPubs);
+    if (candidatePubs.length === 0) {
+      setStatus("No pubs match your selected filters anywhere. Try turning one off.");
+      pubPool = [];
+      pubListEl.innerHTML = "";
+      return;
+    }
+
+    const { pubs, isFallback } = searchPubs(candidatePubs, origin, radiusMiles);
     pubPool = pubs;
 
     if (!isFallback) {
       setStatus(`Found ${pubPool.length} pub${pubPool.length === 1 ? "" : "s"} within ${radiusMiles} miles.`);
     } else {
       setStatus(
-        `No pubs within ${radiusMiles} miles of ${label} — showing the ${pubPool.length} closest instead.`
+        `No matching pubs within ${radiusMiles} miles of ${label} — showing the ${pubPool.length} closest instead.`
       );
     }
 
@@ -209,6 +244,16 @@ function geolocateUser() {
       { timeout: 10000, maximumAge: 60000 }
     );
   });
+}
+
+function applyPubFilters(pubs) {
+  if (activeFilters.size === 0) return pubs;
+  return pubs.filter(
+    (pub) =>
+      (!activeFilters.has("beerGarden") || pub.beerGarden) &&
+      (!activeFilters.has("dogFriendly") || pub.dogFriendly) &&
+      (!activeFilters.has("foodServed") || pub.foodServed)
+  );
 }
 
 async function geocodePostcode(postcode) {
@@ -334,6 +379,101 @@ function formatWalkTime(distanceMiles) {
   return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
 }
 
+// A deliberately conservative subset of the OSM opening_hours spec: day
+// ranges/lists (Mo-Fr, Sa-Su, Mo,We,Fr) combined with one or more time
+// ranges (11:00-23:00, with commas for split hours), separated by ";" for
+// multiple rules, plus the special case "24/7". Anything involving public
+// holidays, seasons, months, or other syntax we don't handle causes the
+// whole spec to be rejected (returns null) -- showing no status is far
+// better than confidently claiming a pub is open or closed based on a
+// guess about a format we don't actually understand.
+const OPENING_HOURS_DAY_ORDER = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+
+function parseOpeningHours(spec) {
+  if (!spec) return null;
+  const trimmed = spec.trim();
+  if (/^24\/7$/i.test(trimmed)) {
+    return [{ days: [0, 1, 2, 3, 4, 5, 6], start: 0, end: 24 * 60 }];
+  }
+
+  const rules = [];
+  const segments = trimmed.split(";").map((s) => s.trim()).filter(Boolean);
+  if (segments.length === 0) return null;
+
+  for (const segment of segments) {
+    if (/PH|SH|off|week|holiday|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec/i.test(segment)) {
+      return null;
+    }
+
+    const match = segment.match(/^([A-Za-z,-]+)\s+(.+)$/);
+    let days, timePart;
+    if (match) {
+      days = parseOpeningHoursDays(match[1]);
+      if (!days) return null;
+      timePart = match[2];
+    } else {
+      // No day prefix at all (e.g. "11:30-23:00") is valid OSM shorthand
+      // meaning every day of the week.
+      days = [0, 1, 2, 3, 4, 5, 6];
+      timePart = segment;
+    }
+
+    for (const range of timePart.split(",").map((t) => t.trim())) {
+      const timeMatch = range.match(/^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/);
+      if (!timeMatch) return null;
+      const [sh, sm, eh, em] = timeMatch.slice(1).map(Number);
+      rules.push({ days, start: sh * 60 + sm, end: eh * 60 + em });
+    }
+  }
+
+  return rules;
+}
+
+function parseOpeningHoursDays(dayPart) {
+  const days = new Set();
+  for (const token of dayPart.split(",")) {
+    const rangeMatch = token.match(/^([A-Za-z]{2})-([A-Za-z]{2})$/);
+    if (rangeMatch) {
+      const startIdx = OPENING_HOURS_DAY_ORDER.indexOf(rangeMatch[1]);
+      const endIdx = OPENING_HOURS_DAY_ORDER.indexOf(rangeMatch[2]);
+      if (startIdx === -1 || endIdx === -1) return null;
+      for (let i = startIdx; ; i = (i + 1) % 7) {
+        days.add(i);
+        if (i === endIdx) break;
+      }
+    } else {
+      const idx = OPENING_HOURS_DAY_ORDER.indexOf(token);
+      if (idx === -1) return null;
+      days.add(idx);
+    }
+  }
+  return [...days];
+}
+
+function isOpenAt(rules, date) {
+  const day = (date.getDay() + 6) % 7; // convert JS Sun=0..Sat=6 to Mo=0..Su=6
+  const prevDay = (day + 6) % 7;
+  const minutes = date.getHours() * 60 + date.getMinutes();
+
+  for (const rule of rules) {
+    const crossesMidnight = rule.end <= rule.start;
+    if (!crossesMidnight) {
+      if (rule.days.includes(day) && minutes >= rule.start && minutes < rule.end) return true;
+    } else {
+      if (rule.days.includes(day) && minutes >= rule.start) return true;
+      if (rule.days.includes(prevDay) && minutes < rule.end) return true;
+    }
+  }
+  return false;
+}
+
+// Returns "open", "closed", or null (spec absent or too complex to trust).
+function getOpenStatus(openingHours) {
+  const rules = parseOpeningHours(openingHours);
+  if (!rules) return null;
+  return isOpenAt(rules, new Date()) ? "open" : "closed";
+}
+
 function showRandomPub() {
   const pub = pubPool[Math.floor(Math.random() * pubPool.length)];
   showPub(pub);
@@ -346,6 +486,16 @@ function showPub(pub) {
   document.getElementById("pub-address").textContent = pub.address;
   document.getElementById("pub-operator").textContent = pub.operator ? `Run by ${pub.operator}` : "";
   document.getElementById("pub-operator").classList.toggle("hidden", !pub.operator);
+
+  const openStatus = getOpenStatus(pub.openingHours);
+  const openBadge = document.getElementById("pub-open-status");
+  openBadge.classList.toggle("hidden", !openStatus);
+  if (openStatus) {
+    openBadge.textContent = openStatus === "open" ? "Open now" : "Closed now";
+    openBadge.classList.toggle("open", openStatus === "open");
+    openBadge.classList.toggle("closed", openStatus === "closed");
+  }
+
   document.getElementById("pub-distance").textContent =
     typeof pub.distanceMiles === "number"
       ? `${pub.distanceMiles.toFixed(2)} miles away · ~${formatWalkTime(pub.distanceMiles)} walk`
@@ -487,6 +637,15 @@ function renderList() {
     const name = document.createElement("span");
     name.className = "pub-list-name";
     name.textContent = pub.name;
+
+    const openStatus = getOpenStatus(pub.openingHours);
+    if (openStatus) {
+      const dot = document.createElement("span");
+      dot.className = `open-dot ${openStatus}`;
+      dot.title = openStatus === "open" ? "Open now" : "Closed now";
+      name.appendChild(dot);
+    }
+
     const address = document.createElement("span");
     address.className = "pub-list-address";
     address.textContent = pub.operator ? `${pub.address} · ${pub.operator}` : pub.address;
@@ -608,6 +767,15 @@ function renderFavouritesView() {
     const name = document.createElement("span");
     name.className = "pub-list-name";
     name.textContent = pub.name;
+
+    const openStatus = getOpenStatus(pub.openingHours);
+    if (openStatus) {
+      const dot = document.createElement("span");
+      dot.className = `open-dot ${openStatus}`;
+      dot.title = openStatus === "open" ? "Open now" : "Closed now";
+      name.appendChild(dot);
+    }
+
     const address = document.createElement("span");
     address.className = "pub-list-address";
     address.textContent = pub.operator ? `${pub.address} · ${pub.operator}` : pub.address;
@@ -725,6 +893,31 @@ function renderRecentSearches() {
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
   navigator.serviceWorker.register("sw.js").catch((err) => console.warn("Service worker registration failed", err));
+}
+
+function getStoredTheme() {
+  try {
+    return localStorage.getItem(THEME_KEY) || "auto";
+  } catch {
+    return "auto";
+  }
+}
+
+function setStoredTheme(theme) {
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    // ignore -- the toggle just won't persist across visits
+  }
+}
+
+function applyTheme(theme) {
+  if (theme === "light" || theme === "dark") {
+    document.documentElement.setAttribute("data-theme", theme);
+  } else {
+    document.documentElement.removeAttribute("data-theme");
+  }
+  themeToggleBtn.textContent = theme === "light" ? "☀️ Light" : theme === "dark" ? "🌙 Dark" : "🌓 Auto";
 }
 
 function setStatus(text) {

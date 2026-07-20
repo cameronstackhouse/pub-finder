@@ -21,6 +21,31 @@
   }
 }
 
+/* Explicit overrides for the manual theme toggle -- these must come after
+   the prefers-color-scheme block above so a manual choice always wins over
+   the system preference, regardless of what that preference is. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f7f3ec;
+  --fg: #2b2118;
+  --card: #ffffff;
+  --accent: #a2361b;
+  --accent-dark: #7d2913;
+  --muted: #6b6055;
+  --border: #e5dcd0;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1b1712;
+  --fg: #f1e9dd;
+  --card: #2a241c;
+  --accent: #e07a4a;
+  --accent-dark: #f0966b;
+  --muted: #b6a894;
+  --border: #3d352a;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -42,8 +67,26 @@ body {
 }
 
 .hero {
+  position: relative;
   text-align: center;
   margin-bottom: 1.75rem;
+}
+
+.theme-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 999px;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.theme-toggle:hover {
+  border-color: var(--accent);
 }
 
 .hero h1 {
@@ -114,6 +157,33 @@ body {
 }
 
 .recent-searches button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: -0.3rem;
+}
+
+.filter-chips .chip {
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 999px;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.filter-chips .chip:hover {
+  border-color: var(--accent);
+}
+
+.filter-chips .chip.active {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
@@ -233,6 +303,42 @@ button,
 .muted {
   color: var(--muted);
   margin: 0.2rem 0;
+}
+
+.open-badge {
+  display: inline-block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  margin-bottom: 0.4rem;
+}
+
+.open-badge.open {
+  background: rgba(74, 158, 77, 0.18);
+  color: #3f8f45;
+}
+
+.open-badge.closed {
+  background: rgba(162, 54, 27, 0.14);
+  color: var(--accent);
+}
+
+.open-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+}
+
+.open-dot.open {
+  background: #3f8f45;
+}
+
+.open-dot.closed {
+  background: var(--accent);
 }
 
 #map {
