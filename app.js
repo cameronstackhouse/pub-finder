@@ -14,11 +14,14 @@ const statusEl = document.getElementById("status");
 const resultSection = document.getElementById("result");
 const rerollBtn = document.getElementById("reroll-btn");
 const directionsLink = document.getElementById("directions-link");
+const listHeading = document.getElementById("list-heading");
+const pubListEl = document.getElementById("pub-list");
 
 let pubPool = [];
 let origin = null;
 let map = null;
 let marker = null;
+let activePub = null;
 
 radiusInput.addEventListener("input", () => {
   radiusValue.textContent = radiusInput.value;
@@ -54,11 +57,13 @@ async function runSearch() {
         `No pubs found within ${radiusMiles} miles of ${postcode.toUpperCase()}. Try a bigger radius.`
       );
       pubPool = [];
+      pubListEl.innerHTML = "";
       return;
     }
 
-    pubPool = pubs;
-    setStatus(`Found ${pubs.length} pub${pubs.length === 1 ? "" : "s"} nearby.`);
+    pubPool = pubs.sort((a, b) => a.distanceMiles - b.distanceMiles);
+    setStatus(`Found ${pubs.length} pub${pubs.length === 1 ? "" : "s"} within ${radiusMiles} miles.`);
+    renderList();
     showRandomPub();
   } catch (err) {
     console.error(err);
@@ -98,22 +103,29 @@ async function findPubs(origin, radiusMiles) {
     out center tags;
   `;
 
-  let data = null;
-  let lastErr = null;
-
-  for (const endpoint of OVERPASS_ENDPOINTS) {
+  const fetchFrom = async (endpoint) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
     try {
       const res = await fetch(endpoint, {
         method: "POST",
         body: "data=" + encodeURIComponent(query),
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        signal: controller.signal,
       });
       if (!res.ok) throw new Error("bad status " + res.status);
-      data = await res.json();
-      break;
-    } catch (err) {
-      lastErr = err;
+      return await res.json();
+    } finally {
+      clearTimeout(timeout);
     }
+  };
+
+  // Race all mirrors so a slow/overloaded instance doesn't block the whole search.
+  let data;
+  try {
+    data = await Promise.any(OVERPASS_ENDPOINTS.map(fetchFrom));
+  } catch {
+    data = null;
   }
 
   if (!data) {
@@ -172,6 +184,11 @@ function haversineMiles(lat1, lon1, lat2, lon2) {
 
 function showRandomPub() {
   const pub = pubPool[Math.floor(Math.random() * pubPool.length)];
+  showPub(pub);
+}
+
+function showPub(pub) {
+  activePub = pub;
 
   document.getElementById("pub-name").textContent = pub.name;
   document.getElementById("pub-address").textContent = pub.address;
@@ -180,6 +197,45 @@ function showRandomPub() {
 
   resultSection.classList.remove("hidden");
   renderMap(pub);
+  highlightActiveListItem();
+}
+
+function renderList() {
+  pubListEl.innerHTML = "";
+  listHeading.textContent = `All ${pubPool.length} pub${pubPool.length === 1 ? "" : "s"} in range, closest first`;
+
+  for (const pub of pubPool) {
+    const li = document.createElement("li");
+    li.dataset.key = pub.name + pub.lat + pub.lon;
+
+    const info = document.createElement("span");
+    const name = document.createElement("span");
+    name.className = "pub-list-name";
+    name.textContent = pub.name;
+    const address = document.createElement("span");
+    address.className = "pub-list-address";
+    address.textContent = pub.address;
+    info.appendChild(name);
+    info.appendChild(address);
+
+    const distance = document.createElement("span");
+    distance.className = "pub-list-distance";
+    distance.textContent = `${pub.distanceMiles.toFixed(2)} mi`;
+
+    li.appendChild(info);
+    li.appendChild(distance);
+    li.addEventListener("click", () => showPub(pub));
+
+    pubListEl.appendChild(li);
+  }
+}
+
+function highlightActiveListItem() {
+  if (!activePub) return;
+  const activeKey = activePub.name + activePub.lat + activePub.lon;
+  for (const li of pubListEl.children) {
+    li.classList.toggle("active", li.dataset.key === activeKey);
+  }
 }
 
 function renderMap(pub) {

@@ -172,6 +172,61 @@ button,
   flex: 1;
 }
 
+.list-heading {
+  margin: 1.75rem 0 0.75rem;
+  font-size: 1rem;
+  color: var(--muted);
+}
+
+.pub-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.pub-list li {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.9rem 1.1rem;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  transition: border-color 0.15s ease;
+}
+
+.pub-list li:hover {
+  border-color: var(--accent);
+}
+
+.pub-list li.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.pub-list .pub-list-name {
+  font-weight: 600;
+}
+
+.pub-list .pub-list-address {
+  display: block;
+  font-weight: 400;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-top: 0.15rem;
+}
+
+.pub-list .pub-list-distance {
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
 .footer {
   text-align: center;
   margin-top: 2.5rem;
