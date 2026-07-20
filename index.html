@@ -83,6 +83,28 @@
 
         <h3 id="list-heading" class="list-heading"></h3>
         <ul id="pub-list" class="pub-list"></ul>
+
+        <div id="crawl-section" class="crawl-section hidden">
+          <button id="crawl-toggle-btn" type="button" class="crawl-toggle-btn" aria-expanded="false">🍺 Plan a pub crawl</button>
+
+          <div id="crawl-panel" class="crawl-panel hidden">
+            <div class="field">
+              <label for="crawl-stops">Stops: <span id="crawl-stops-value">4</span></label>
+              <input id="crawl-stops" type="range" min="2" max="6" step="1" value="4" />
+            </div>
+            <div class="crawl-panel-actions">
+              <button id="build-crawl-btn" type="button">Build route</button>
+              <button id="shuffle-crawl-btn" type="button" class="crawl-secondary-btn hidden">🔀 Different pubs</button>
+            </div>
+
+            <div id="crawl-route" class="crawl-route hidden">
+              <ol id="crawl-route-list" class="crawl-route-list"></ol>
+              <p id="crawl-route-summary" class="muted"></p>
+              <div id="crawl-map"></div>
+              <a id="crawl-directions-link" href="#" target="_blank" rel="noopener">Get walking directions</a>
+            </div>
+          </div>
+        </div>
       </section>
     </div>
 
