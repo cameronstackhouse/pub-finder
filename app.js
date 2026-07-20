@@ -97,6 +97,7 @@ const crawlStopsInput = /** @type {HTMLInputElement} */ (getEl("crawl-stops"));
 const crawlStopsValue = getEl("crawl-stops-value");
 const crawlMaxLegInput = /** @type {HTMLInputElement} */ (getEl("crawl-max-leg"));
 const crawlMaxLegValue = getEl("crawl-max-leg-value");
+const crawlFilterChipsEl = getEl("crawl-filter-chips");
 const crawlSubmitBtn = /** @type {HTMLButtonElement} */ (getEl("crawl-submit-btn"));
 const crawlLocationBtn = /** @type {HTMLButtonElement} */ (getEl("crawl-location-btn"));
 const crawlStatusEl = getEl("crawl-status");
@@ -127,6 +128,11 @@ let currentSearchKey = null;
 let crawlOrigin = null;
 /** @type {Pub[]} Nearest deduped candidates around crawlOrigin, computed once per "Plan my crawl"/location request and re-used by the shuffle button. */
 let crawlCandidates = [];
+// Pubs the user has pinned so a shuffle keeps them instead of rerolling
+// everything. Keyed by pubKey() rather than holding Pub[] directly so
+// membership checks against freshly-rendered stops are just a Set lookup.
+/** @type {Set<string>} */
+let lockedStopKeys = new Set();
 /** @type {any} Leaflet map instance for the crawl route; separate from `map` above. */
 let crawlMap = null;
 /** @type {any[]} Markers/polyline currently drawn on crawlMap, cleared and redrawn on each route rebuild. */
@@ -137,6 +143,8 @@ let crawlMapLayers = [];
 // casting at the one call site that reads it instead of here.
 /** @type {Set<string>} */
 const activeFilters = new Set();
+/** @type {Set<string>} Separate from activeFilters -- the crawl planner is an independent flow with its own start point and candidate pool. */
+const crawlActiveFilters = new Set();
 
 // Warm the cache immediately so it's ready (or already loaded) by the time
 // the user submits a search. Failures are intentionally not cached here --
@@ -209,6 +217,17 @@ crawlStopsInput.addEventListener("input", () => {
 crawlMaxLegInput.addEventListener("input", () => {
   crawlMaxLegValue.textContent = parseFloat(crawlMaxLegInput.value).toFixed(1);
   if (crawlOrigin) buildAndRenderCrawl({ randomize: false });
+});
+
+crawlFilterChipsEl.addEventListener("click", (e) => {
+  const btn = /** @type {HTMLElement} */ (/** @type {Element} */ (e.target).closest("button[data-filter]"));
+  if (!btn) return;
+  const filter = btn.dataset.filter;
+  if (crawlActiveFilters.has(filter)) crawlActiveFilters.delete(filter);
+  else crawlActiveFilters.add(filter);
+  btn.classList.toggle("active", crawlActiveFilters.has(filter));
+  btn.setAttribute("aria-pressed", crawlActiveFilters.has(filter) ? "true" : "false");
+  if (crawlOrigin) refreshCrawlCandidates();
 });
 
 shuffleCrawlBtn.addEventListener("click", () => {
@@ -356,7 +375,7 @@ async function performSearch({ statusVerb, resolveOrigin, label, onSuccess }) {
       }),
     ]);
 
-    const candidatePubs = applyPubFilters(allPubs);
+    const candidatePubs = applyPubFilters(allPubs, activeFilters);
     if (candidatePubs.length === 0) {
       setStatus("No pubs match your selected filters anywhere. Try turning one off.");
       pubPool = [];
@@ -411,16 +430,17 @@ function geolocateUser() {
 
 /**
  * @param {Pub[]} pubs
+ * @param {Set<string>} filters
  * @returns {Pub[]}
  */
-function applyPubFilters(pubs) {
-  if (activeFilters.size === 0) return pubs;
+function applyPubFilters(pubs, filters) {
+  if (filters.size === 0) return pubs;
   return pubs.filter(
     (pub) =>
-      (!activeFilters.has("beerGarden") || pub.beerGarden) &&
-      (!activeFilters.has("dogFriendly") || pub.dogFriendly) &&
-      (!activeFilters.has("foodServed") || pub.foodServed) &&
-      (!activeFilters.has("nearSea") || pub.nearSea)
+      (!filters.has("beerGarden") || pub.beerGarden) &&
+      (!filters.has("dogFriendly") || pub.dogFriendly) &&
+      (!filters.has("foodServed") || pub.foodServed) &&
+      (!filters.has("nearSea") || pub.nearSea)
   );
 }
 
@@ -948,8 +968,6 @@ function setCrawlStatus(text) {
  * @param {string} options.statusVerb
  */
 async function runCrawlPlan({ resolveOrigin, statusVerb }) {
-  const stopCount = parseInt(crawlStopsInput.value, 10);
-
   setCrawlBusy(true);
   setCrawlStatus(statusVerb);
   crawlResultEl.classList.add("hidden");
@@ -962,14 +980,10 @@ async function runCrawlPlan({ resolveOrigin, statusVerb }) {
       }),
     ]);
 
-    const candidates = nearestCandidatePubs(allPubs, origin, Math.max(stopCount * 8, 30));
-    if (candidates.length === 0) {
-      setCrawlStatus("Couldn't find any pubs near that start point.");
-      return;
-    }
-
     crawlOrigin = origin;
-    crawlCandidates = candidates;
+    lockedStopKeys = new Set();
+    if (!(await loadCrawlCandidates())) return;
+
     buildAndRenderCrawl({ randomize: false });
   } catch (err) {
     console.error(err);
@@ -977,6 +991,43 @@ async function runCrawlPlan({ resolveOrigin, statusVerb }) {
   } finally {
     setCrawlBusy(false);
   }
+}
+
+// Re-gathers candidates around the existing crawlOrigin -- used when a
+// filter chip is toggled after a crawl has already been planned, since
+// changing filters changes the candidate pool itself, not just which of
+// the existing candidates get chosen as stops.
+async function refreshCrawlCandidates() {
+  if (!crawlOrigin) return;
+  lockedStopKeys = new Set();
+  if (!(await loadCrawlCandidates())) return;
+  buildAndRenderCrawl({ randomize: false });
+}
+
+// Shared by runCrawlPlan and refreshCrawlCandidates: applies the crawl
+// filter chips, then gathers the nearest candidates around crawlOrigin.
+// Returns false (after setting an explanatory status) if nothing qualifies.
+/** @returns {Promise<boolean>} */
+async function loadCrawlCandidates() {
+  const stopCount = parseInt(crawlStopsInput.value, 10);
+  const allPubs = await getPubsData().catch(() => {
+    throw new Error("Couldn't load the pub dataset. Please try again.");
+  });
+  const filtered = applyPubFilters(allPubs, crawlActiveFilters);
+  const candidates = nearestCandidatePubs(filtered, /** @type {Origin} */ (crawlOrigin), Math.max(stopCount * 8, 30));
+
+  if (candidates.length === 0) {
+    setCrawlStatus(
+      crawlActiveFilters.size > 0
+        ? "No pubs match your filters near that start point. Try turning one off."
+        : "Couldn't find any pubs near that start point."
+    );
+    crawlResultEl.classList.add("hidden");
+    return false;
+  }
+
+  crawlCandidates = candidates;
+  return true;
 }
 
 /**
@@ -1134,22 +1185,46 @@ function buildAndRenderCrawl({ randomize }) {
   if (!crawlOrigin || crawlCandidates.length === 0) return;
 
   const requestedStops = parseInt(crawlStopsInput.value, 10);
-  const stopCount = Math.min(requestedStops, crawlCandidates.length);
   const maxLegMiles = parseFloat(crawlMaxLegInput.value);
 
-  const chosen = selectCrawlStops(crawlCandidates, crawlOrigin, stopCount, maxLegMiles, randomize);
+  // Pinned stops are always kept; only the remaining slots go through
+  // selectCrawlStops (deterministic or shuffled). If more stops are pinned
+  // than requested, the pins win -- shrinking below what's already locked
+  // in would mean silently un-pinning something the user asked to keep.
+  const locked = crawlCandidates.filter((p) => lockedStopKeys.has(pubKey(p)));
+  const unlocked = crawlCandidates.filter((p) => !lockedStopKeys.has(pubKey(p)));
+  const stopCount = Math.max(Math.min(requestedStops, crawlCandidates.length), locked.length);
+  const remainingSlots = stopCount - locked.length;
+
+  const additional =
+    remainingSlots > 0 ? selectCrawlStops(unlocked, crawlOrigin, remainingSlots, maxLegMiles, randomize) : [];
+
+  const chosen = [...locked, ...additional];
   const ordered = bestCircularOrder(chosen, crawlOrigin);
   const { legs, returnMiles } = computeCrawlLegs(ordered, crawlOrigin);
 
   renderCrawlRoute(legs, returnMiles, maxLegMiles);
 
   crawlOriginLabelEl.textContent = `Starting from ${crawlOrigin.label}`;
-  setCrawlStatus(
-    chosen.length < requestedStops
-      ? `Only found ${chosen.length} pub${chosen.length === 1 ? "" : "s"} nearby.`
-      : ""
-  );
+  if (chosen.length < requestedStops) {
+    setCrawlStatus(`Only found ${chosen.length} pub${chosen.length === 1 ? "" : "s"} nearby.`);
+  } else if (chosen.length > requestedStops) {
+    setCrawlStatus(`Showing ${chosen.length} stops — more than ${requestedStops} pubs are pinned.`);
+  } else {
+    setCrawlStatus("");
+  }
   crawlResultEl.classList.remove("hidden");
+}
+
+/**
+ * @param {HTMLButtonElement} btn
+ * @param {Pub} pub
+ * @param {boolean} locked
+ */
+function updateCrawlLockBtn(btn, pub, locked) {
+  btn.classList.toggle("active", locked);
+  btn.setAttribute("aria-pressed", String(locked));
+  btn.setAttribute("aria-label", `${locked ? "Unpin" : "Pin"} ${pub.name} so shuffling keeps it`);
 }
 
 /**
@@ -1164,12 +1239,16 @@ function renderCrawlRoute(legs, returnMiles, maxLegMiles) {
   legs.forEach((leg, index) => {
     totalMiles += leg.legMiles;
 
+    const key = pubKey(leg.pub);
     const li = document.createElement("li");
+    li.classList.toggle("locked", lockedStopKeys.has(key));
+
     const num = document.createElement("span");
     num.className = "crawl-stop-num";
     num.textContent = String(index + 1);
 
     const info = document.createElement("span");
+    info.className = "crawl-stop-info";
     const name = document.createElement("span");
     name.className = "pub-list-name";
     name.textContent = leg.pub.name;
@@ -1188,8 +1267,22 @@ function renderCrawlRoute(legs, returnMiles, maxLegMiles) {
     info.appendChild(name);
     info.appendChild(legInfo);
 
+    const lockBtn = document.createElement("button");
+    lockBtn.type = "button";
+    lockBtn.className = "crawl-lock-btn";
+    lockBtn.textContent = "📌";
+    updateCrawlLockBtn(lockBtn, leg.pub, lockedStopKeys.has(key));
+    lockBtn.addEventListener("click", () => {
+      if (lockedStopKeys.has(key)) lockedStopKeys.delete(key);
+      else lockedStopKeys.add(key);
+      const nowLocked = lockedStopKeys.has(key);
+      li.classList.toggle("locked", nowLocked);
+      updateCrawlLockBtn(lockBtn, leg.pub, nowLocked);
+    });
+
     li.appendChild(num);
     li.appendChild(info);
+    li.appendChild(lockBtn);
     crawlRouteListEl.appendChild(li);
   });
 

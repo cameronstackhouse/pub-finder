@@ -538,6 +538,38 @@ button,
   border-style: dashed;
 }
 
+.crawl-route-list li.locked {
+  border-color: var(--accent);
+}
+
+.crawl-stop-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.crawl-lock-btn {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.crawl-lock-btn:hover {
+  border-color: var(--accent);
+}
+
+.crawl-lock-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 .crawl-stop-num {
   flex-shrink: 0;
   width: 1.6rem;
