@@ -8,9 +8,10 @@ test("favourites tab shows an empty state with nothing saved", async ({ page }) 
 
   await expect(page.locator("#favourites-empty")).toBeVisible();
   await expect(page.locator("#favourites-list li")).toHaveCount(0);
-  // No crawl content should leak through onto this tab (regression guard
-  // for the ID-selector/.hidden specificity bug).
+  // No crawl or map content should leak through onto this tab (regression
+  // guard for the ID-selector/.hidden specificity bug).
   await expect(page.locator("#crawl-form")).not.toBeVisible();
+  await expect(page.locator("#explore-map")).not.toBeVisible();
 });
 
 test("clicking a saved favourite switches to Search and shows that pub", async ({ page }) => {

@@ -95,9 +95,11 @@ const osmEditLink = /** @type {HTMLAnchorElement} */ (getEl("osm-edit-link"));
 const favouriteBtn = /** @type {HTMLButtonElement} */ (getEl("favourite-btn"));
 const banBtn = /** @type {HTMLButtonElement} */ (getEl("ban-btn"));
 const tabSearchBtn = /** @type {HTMLButtonElement} */ (getEl("tab-search"));
+const tabMapBtn = /** @type {HTMLButtonElement} */ (getEl("tab-map"));
 const tabCrawlBtn = /** @type {HTMLButtonElement} */ (getEl("tab-crawl"));
 const tabFavouritesBtn = /** @type {HTMLButtonElement} */ (getEl("tab-favourites"));
 const searchView = getEl("search-view");
+const mapView = getEl("map-view");
 const crawlView = getEl("crawl-view");
 const favouritesView = getEl("favourites-view");
 const favouritesCountEl = getEl("favourites-count");
@@ -107,6 +109,11 @@ const bannedHeadingEl = getEl("banned-heading");
 const bannedListEl = getEl("banned-list");
 const recentSearchesEl = getEl("recent-searches");
 const dataFreshnessEl = getEl("data-freshness");
+const mapPostcodeInput = /** @type {HTMLInputElement} */ (getEl("map-postcode"));
+const mapPostcodeBtn = /** @type {HTMLButtonElement} */ (getEl("map-postcode-btn"));
+const mapLocationBtn = /** @type {HTMLButtonElement} */ (getEl("map-location-btn"));
+const mapFilterChipsEl = getEl("map-filter-chips");
+const mapStatusEl = getEl("map-status");
 const crawlForm = getEl("crawl-form");
 const crawlPostcodeInput = /** @type {HTMLInputElement} */ (getEl("crawl-postcode"));
 const crawlStopsInput = /** @type {HTMLInputElement} */ (getEl("crawl-stops"));
@@ -163,6 +170,15 @@ let crawlMapLayers = [];
 const activeFilters = new Set();
 /** @type {Set<string>} Separate from activeFilters -- the crawl planner is an independent flow with its own start point and candidate pool. */
 const crawlActiveFilters = new Set();
+/** @type {Set<string>} Separate again -- the explore map filters its own marker set independently of Search/Crawl. */
+const exploreActiveFilters = new Set();
+
+/** @type {any} Leaflet map instance for the explore/browse map; separate from `map` and `crawlMap` above. */
+let exploreMap = null;
+/** @type {any} Leaflet.markercluster group holding whichever markers currently pass exploreActiveFilters. */
+let exploreClusterGroup = null;
+/** @type {Map<string, {marker: any, pub: Pub}>} All non-banned pubs' markers, built once on first visiting the Map tab and reused after (banning removes an entry; a fresh page load is what re-syncs everything else). */
+let exploreMarkersByKey = new Map();
 
 // Warm the cache immediately so it's ready (or already loaded) by the time
 // the user submits a search. Failures are intentionally not cached here --
@@ -182,6 +198,10 @@ radiusInput.addEventListener("input", () => {
 });
 
 tabSearchBtn.addEventListener("click", () => switchView("search"));
+tabMapBtn.addEventListener("click", () => {
+  switchView("map");
+  initExploreMap();
+});
 tabCrawlBtn.addEventListener("click", () => switchView("crawl"));
 tabFavouritesBtn.addEventListener("click", () => switchView("favourites"));
 
@@ -272,6 +292,39 @@ crawlFilterChipsEl.addEventListener("click", (e) => {
 
 shuffleCrawlBtn.addEventListener("click", () => {
   buildAndRenderCrawl({ randomize: true });
+});
+
+mapPostcodeBtn.addEventListener("click", () => {
+  jumpExploreMapToPostcode();
+});
+
+mapPostcodeInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    jumpExploreMapToPostcode();
+  }
+});
+
+mapLocationBtn.addEventListener("click", async () => {
+  setMapStatus("Finding your location…");
+  try {
+    const origin = await geolocateUser();
+    exploreMap.setView([origin.lat, origin.lon], 15);
+    setMapStatus("");
+  } catch (err) {
+    setMapStatus(err.message || "Couldn't get your location.");
+  }
+});
+
+mapFilterChipsEl.addEventListener("click", (e) => {
+  const btn = /** @type {HTMLElement} */ (/** @type {Element} */ (e.target).closest("button[data-filter]"));
+  if (!btn) return;
+  const filter = btn.dataset.filter;
+  if (exploreActiveFilters.has(filter)) exploreActiveFilters.delete(filter);
+  else exploreActiveFilters.add(filter);
+  btn.classList.toggle("active", exploreActiveFilters.has(filter));
+  btn.setAttribute("aria-pressed", exploreActiveFilters.has(filter) ? "true" : "false");
+  applyExploreFilters();
 });
 
 rerollBtn.addEventListener("click", () => {
@@ -469,19 +522,27 @@ function geolocateUser() {
 }
 
 /**
+ * @param {Pub} pub
+ * @param {Set<string>} filters
+ * @returns {boolean}
+ */
+function pubMatchesFilters(pub, filters) {
+  return (
+    (!filters.has("beerGarden") || pub.beerGarden) &&
+    (!filters.has("dogFriendly") || pub.dogFriendly) &&
+    (!filters.has("foodServed") || pub.foodServed) &&
+    (!filters.has("nearSea") || pub.nearSea)
+  );
+}
+
+/**
  * @param {Pub[]} pubs
  * @param {Set<string>} filters
  * @returns {Pub[]}
  */
 function applyPubFilters(pubs, filters) {
   if (filters.size === 0) return pubs;
-  return pubs.filter(
-    (pub) =>
-      (!filters.has("beerGarden") || pub.beerGarden) &&
-      (!filters.has("dogFriendly") || pub.dogFriendly) &&
-      (!filters.has("foodServed") || pub.foodServed) &&
-      (!filters.has("nearSea") || pub.nearSea)
-  );
+  return pubs.filter((pub) => pubMatchesFilters(pub, filters));
 }
 
 /**
@@ -1454,6 +1515,163 @@ function renderCrawlMap(origin, stops) {
   setTimeout(() => crawlMap.invalidateSize(), 100);
 }
 
+/** @param {string} text */
+function setMapStatus(text) {
+  mapStatusEl.textContent = text;
+}
+
+// Lazily builds the explore map and every pub's marker the first time the
+// Map tab is opened -- there's no point paying for 52k marker objects on
+// every page load when most visits never touch this tab. Subsequent visits
+// just need invalidateSize() (Leaflet reports zero size for a map whose
+// container was display:none when it was created).
+async function initExploreMap() {
+  if (exploreMap) {
+    setTimeout(() => exploreMap.invalidateSize(), 0);
+    return;
+  }
+
+  exploreMap = L.map("explore-map").setView([54.5, -3.5], 6);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "&copy; OpenStreetMap contributors",
+    maxZoom: 19,
+  }).addTo(exploreMap);
+
+  exploreClusterGroup = L.markerClusterGroup({
+    chunkedLoading: true,
+    chunkProgress: (processed, total) => {
+      if (total === 0) {
+        setMapStatus("No pubs match your filters.");
+      } else if (processed === total) {
+        setMapStatus(`Showing ${total.toLocaleString("en-GB")} pubs`);
+      }
+    },
+  });
+  exploreClusterGroup.addTo(exploreMap);
+
+  setMapStatus("Loading pubs…");
+  try {
+    const allPubs = await getPubsData();
+    for (const pub of excludeBannedPubs(allPubs)) {
+      exploreMarkersByKey.set(pubKey(pub), { marker: buildExploreMarker(pub), pub });
+    }
+    applyExploreFilters();
+  } catch (err) {
+    console.error(err);
+    setMapStatus("Couldn't load the pub dataset. Please try again.");
+  }
+
+  setTimeout(() => exploreMap.invalidateSize(), 100);
+}
+
+/**
+ * @param {Pub} pub
+ * @returns {any} A Leaflet marker with lazily-generated popup content (built fresh each open, so it always reflects current favourite state).
+ */
+function buildExploreMarker(pub) {
+  const marker = L.marker([pub.lat, pub.lon]);
+  marker.bindPopup(() => buildExplorePopupContent(pub, marker));
+  return marker;
+}
+
+/**
+ * @param {Pub} pub
+ * @param {any} marker
+ * @returns {HTMLElement}
+ */
+function buildExplorePopupContent(pub, marker) {
+  const container = document.createElement("div");
+  container.className = "explore-popup";
+
+  const name = document.createElement("h3");
+  name.textContent = pub.name;
+  container.appendChild(name);
+
+  const address = document.createElement("p");
+  address.textContent = pub.address;
+  container.appendChild(address);
+
+  const openStatus = getOpenStatus(pub.openingHours);
+  if (openStatus) {
+    const badge = document.createElement("span");
+    badge.className = `open-badge ${openStatus}`;
+    badge.textContent = openStatus === "open" ? "Open now" : "Closed now";
+    container.appendChild(badge);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "explore-popup-actions";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.textContent = isFavourite(pub) ? "★ Saved" : "☆ Save";
+  saveBtn.addEventListener("click", () => {
+    toggleFavourite(pub);
+    saveBtn.textContent = isFavourite(pub) ? "★ Saved" : "☆ Save";
+  });
+  actions.appendChild(saveBtn);
+
+  const banStopBtn = document.createElement("button");
+  banStopBtn.type = "button";
+  banStopBtn.textContent = "🚫 Ban";
+  banStopBtn.addEventListener("click", () => {
+    marker.closePopup();
+    banPub(pub);
+  });
+  actions.appendChild(banStopBtn);
+
+  const directionsLinkEl = document.createElement("a");
+  directionsLinkEl.href = `https://www.google.com/maps/dir/?api=1&destination=${pub.lat}%2C${pub.lon}`;
+  directionsLinkEl.target = "_blank";
+  directionsLinkEl.rel = "noopener";
+  directionsLinkEl.textContent = "Directions";
+  actions.appendChild(directionsLinkEl);
+
+  const detailsBtn = document.createElement("button");
+  detailsBtn.type = "button";
+  detailsBtn.className = "explore-popup-details";
+  detailsBtn.textContent = "Tell me more →";
+  detailsBtn.addEventListener("click", () => {
+    switchView("search");
+    showPub(pub);
+  });
+  actions.appendChild(detailsBtn);
+
+  container.appendChild(actions);
+  return container;
+}
+
+// Rebuilds the cluster group's contents from exploreMarkersByKey whenever
+// the map's own filter chips change -- markers themselves are created once
+// and reused, only which subset is currently added to the group changes.
+function applyExploreFilters() {
+  if (!exploreClusterGroup) return;
+
+  const matching = [...exploreMarkersByKey.values()].filter(
+    ({ pub }) => exploreActiveFilters.size === 0 || pubMatchesFilters(pub, exploreActiveFilters)
+  );
+
+  exploreClusterGroup.clearLayers();
+  if (matching.length === 0) {
+    setMapStatus("No pubs match your filters.");
+    return;
+  }
+  exploreClusterGroup.addLayers(matching.map((m) => m.marker));
+}
+
+async function jumpExploreMapToPostcode() {
+  const postcode = mapPostcodeInput.value.trim();
+  if (!postcode) return;
+  setMapStatus("Looking up postcode…");
+  try {
+    const origin = await geocodePostcode(postcode);
+    exploreMap.setView([origin.lat, origin.lon], 15);
+    setMapStatus("");
+  } catch (err) {
+    setMapStatus(err.message || "Couldn't look up that postcode.");
+  }
+}
+
 /** @param {Pub} pub */
 function renderMap(pub) {
   if (!map) {
@@ -1642,6 +1860,12 @@ function banPub(pub) {
   banned.push({ name: pub.name, lat: pub.lat, lon: pub.lon });
   saveBannedPubs(banned);
   if (!favouritesView.classList.contains("hidden")) renderBannedListView();
+
+  const exploreEntry = exploreMarkersByKey.get(key);
+  if (exploreEntry && exploreClusterGroup) {
+    exploreClusterGroup.removeLayer(exploreEntry.marker);
+    exploreMarkersByKey.delete(key);
+  }
 }
 
 /** @param {BannedPub} pub */
@@ -1691,15 +1915,18 @@ function renderBannedListView() {
   }
 }
 
-/** @param {"search"|"crawl"|"favourites"} view */
+/** @param {"search"|"map"|"crawl"|"favourites"} view */
 function switchView(view) {
   searchView.classList.toggle("hidden", view !== "search");
+  mapView.classList.toggle("hidden", view !== "map");
   crawlView.classList.toggle("hidden", view !== "crawl");
   favouritesView.classList.toggle("hidden", view !== "favourites");
   tabSearchBtn.classList.toggle("active", view === "search");
+  tabMapBtn.classList.toggle("active", view === "map");
   tabCrawlBtn.classList.toggle("active", view === "crawl");
   tabFavouritesBtn.classList.toggle("active", view === "favourites");
   tabSearchBtn.setAttribute("aria-selected", String(view === "search"));
+  tabMapBtn.setAttribute("aria-selected", String(view === "map"));
   tabCrawlBtn.setAttribute("aria-selected", String(view === "crawl"));
   tabFavouritesBtn.setAttribute("aria-selected", String(view === "favourites"));
   if (view === "favourites") {

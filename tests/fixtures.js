@@ -56,21 +56,75 @@ async function mockApp(page, { rowCount = 12 } = {}) {
       remove() {
         return this;
       }
-      bindPopup() {
+      bindPopup(content) {
+        this._popupContent = content;
         return this;
       }
       openPopup() {
         return this;
       }
+      closePopup() {
+        return this;
+      }
     }
+
+    // Fake Leaflet.markercluster group: tracks which layers are currently
+    // "added" (good enough to assert filter chips actually change what's
+    // shown) and synchronously invokes chunkProgress the way the real
+    // plugin eventually does, so app.js's completion-status logic runs
+    // deterministically in tests instead of depending on real chunking.
+    class FakeClusterGroup {
+      constructor(options) {
+        this._options = options || {};
+        this._layers = [];
+        window.__lastClusterGroup = this;
+      }
+      addTo() {
+        return this;
+      }
+      addLayer(layer) {
+        this._layers.push(layer);
+        return this;
+      }
+      addLayers(layers) {
+        this._layers.push(...layers);
+        if (this._options.chunkProgress) this._options.chunkProgress(layers.length, layers.length, 0);
+        return this;
+      }
+      clearLayers() {
+        this._layers = [];
+        if (this._options.chunkProgress) this._options.chunkProgress(0, 0, 0);
+        return this;
+      }
+      removeLayer(layer) {
+        this._layers = this._layers.filter((l) => l !== layer);
+        return this;
+      }
+      getLayers() {
+        return this._layers;
+      }
+    }
+
+    // window.__mapCalls records setView() calls on any fake map instance so
+    // tests can assert "jump to postcode"/"use my location" navigated
+    // where expected without a real Leaflet map to inspect visually.
+    window.__mapCalls = [];
     window.L = {
-      map: () => ({ setView() {}, invalidateSize() {}, fitBounds() {} }),
+      map: () => ({
+        setView(latlng, zoom) {
+          window.__mapCalls.push({ latlng, zoom });
+          return this;
+        },
+        invalidateSize() {},
+        fitBounds() {},
+      }),
       tileLayer: () => new FakeLayer(),
-      marker: () => new FakeLayer(),
+      marker: (latlng) => Object.assign(new FakeLayer(), { _latlng: latlng }),
       circleMarker: () => new FakeLayer(),
       polyline: () => new FakeLayer(),
       divIcon: (opts) => opts,
       latLngBounds: (pts) => pts,
+      markerClusterGroup: (options) => new FakeClusterGroup(options),
     };
   });
 
@@ -92,6 +146,14 @@ async function mockApp(page, { rowCount = 12 } = {}) {
       contentType: "application/json",
       body: JSON.stringify({ updatedAt: "2026-03-01T00:00:00.000Z", pubCount: rowCount }),
     });
+  });
+
+  // The real vendored plugin extends L.FeatureGroup at load time, which
+  // only exists on a real Leaflet build -- our fake L already provides
+  // markerClusterGroup() directly, so serve an empty stub instead of
+  // letting the real file crash trying to extend a class that isn't there.
+  await page.route("**/vendor/leaflet.markercluster/**", (route) => {
+    route.fulfill({ status: 200, contentType: "application/javascript", body: "" });
   });
 }
 

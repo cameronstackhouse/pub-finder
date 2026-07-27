@@ -10,6 +10,8 @@
   <meta name="theme-color" content="#a2361b" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <link rel="stylesheet" href="vendor/leaflet.markercluster/MarkerCluster.css" />
+  <link rel="stylesheet" href="vendor/leaflet.markercluster/MarkerCluster.Default.css" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -22,6 +24,7 @@
 
     <div class="view-tabs" role="tablist">
       <button id="tab-search" class="tab active" type="button" role="tab" aria-selected="true">Search</button>
+      <button id="tab-map" class="tab" type="button" role="tab" aria-selected="false">🗺️ Map</button>
       <button id="tab-crawl" class="tab" type="button" role="tab" aria-selected="false">🍺 Crawl</button>
       <button id="tab-favourites" class="tab" type="button" role="tab" aria-selected="false">
         Favourites <span id="favourites-count" class="badge hidden">0</span>
@@ -89,6 +92,27 @@
       </section>
     </div>
 
+    <div id="map-view" class="map-view hidden">
+      <div class="map-controls">
+        <div class="map-controls-row">
+          <input id="map-postcode" type="text" placeholder="Jump to a postcode" autocomplete="postal-code" />
+          <button id="map-postcode-btn" type="button">Go</button>
+        </div>
+        <button id="map-location-btn" type="button" class="location-btn">📍 Use my location</button>
+      </div>
+
+      <div id="map-filter-chips" class="filter-chips">
+        <button type="button" class="chip" data-filter="beerGarden" aria-pressed="false">🌳 Beer garden</button>
+        <button type="button" class="chip" data-filter="dogFriendly" aria-pressed="false">🐶 Dog-friendly</button>
+        <button type="button" class="chip" data-filter="foodServed" aria-pressed="false">🍽️ Food</button>
+        <button type="button" class="chip" data-filter="nearSea" aria-pressed="false">🌊 Near the sea</button>
+      </div>
+
+      <p id="map-status" class="status" role="status" aria-live="polite"></p>
+
+      <div id="explore-map"></div>
+    </div>
+
     <div id="crawl-view" class="crawl-view hidden">
       <form id="crawl-form" class="search-card">
         <div class="field">
@@ -154,6 +178,7 @@
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="vendor/leaflet.markercluster/leaflet.markercluster.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

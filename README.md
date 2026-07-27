@@ -10,6 +10,11 @@ A tiny static web app that lists every pub within a chosen radius of a UK postco
   Overpass API call at search time, so it's fast and works the same in rural areas as
   in cities. If nothing falls within the chosen radius, the closest few pubs are shown
   instead.
+- The Map tab browses the whole dataset directly: every pub renders as a clustered
+  marker (via [Leaflet.markercluster](https://github.com/Leaflet/Leaflet.markercluster),
+  vendored in `vendor/` rather than loaded from a CDN — see that folder's README) that
+  resolves into individual pins as you zoom in, so you can explore visually instead of
+  only searching by postcode.
 
 No backend, no API keys, no billing.
 

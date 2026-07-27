@@ -524,6 +524,107 @@ button,
   gap: 1.25rem;
 }
 
+.map-view {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.map-controls {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.map-controls-row {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.map-controls-row input[type="text"] {
+  flex: 1;
+  padding: 0.7rem 0.9rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font-size: 1rem;
+  min-width: 0;
+}
+
+.map-controls-row button {
+  background: var(--accent);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+#explore-map {
+  height: 65vh;
+  min-height: 420px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+}
+
+/* Leaflet.markercluster's default cluster icons are a plain grey circle;
+   recolour to match the app's accent so the map doesn't look like a
+   different product bolted on. */
+.marker-cluster-small,
+.marker-cluster-medium,
+.marker-cluster-large {
+  background-color: rgba(162, 54, 27, 0.25);
+}
+
+.marker-cluster-small div,
+.marker-cluster-medium div,
+.marker-cluster-large div {
+  background-color: var(--accent);
+  color: #fff;
+}
+
+.explore-popup {
+  min-width: 200px;
+  font-size: 0.9rem;
+}
+
+.explore-popup h3 {
+  margin: 0 0 0.3rem;
+  font-size: 1rem;
+}
+
+.explore-popup p {
+  margin: 0 0 0.4rem;
+  color: var(--muted);
+}
+
+.explore-popup-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.explore-popup-actions button,
+.explore-popup-actions a {
+  cursor: pointer;
+  border: none;
+  border-radius: 8px;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: var(--border);
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.explore-popup-actions .explore-popup-details {
+  background: var(--accent);
+  color: #fff;
+}
+
 .crawl-result {
   display: flex;
   flex-direction: column;
