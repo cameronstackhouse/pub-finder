@@ -1,5 +1,8 @@
 # pub-finder
 
+> **Disclaimer:** this project is entirely AI-generated (built with Claude Code).
+> The maintainer has not read any of the code.
+
 A tiny static web app that lists every pub within a chosen radius of a UK postcode
 (and can surprise you with a random one).
 
