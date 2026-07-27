@@ -36,6 +36,12 @@ extract of Great Britain, filtered with `osmium-tool`. Run the "Update GB pubs d
 GitHub Actions workflow (`.github/workflows/update-pub-data.yml`, manually triggered) to
 regenerate it and commit the result.
 
+The same physical pub sometimes appears twice in OSM (a node and a way both
+tagged `amenity=pub` for the same building, a few metres apart). The build
+script collapses these (`scripts/lib/dedupe.mjs`) before writing the file, so
+`data/pubs-gb.json` ships already deduplicated -- the app doesn't need to
+(and doesn't) dedupe on every search/crawl/map load.
+
 ## Deployment
 
 Deployed automatically to GitHub Pages via `.github/workflows/deploy.yml` on every push.
@@ -55,6 +61,17 @@ Runs automatically on push via `.github/workflows/typecheck.yml`. Scoped to
 `app.js` only for now (it's the file with the complex, shared `Pub` data
 shape); `scripts/build-pubs-data.mjs` runs in Node rather than the browser
 and hasn't been brought in yet.
+
+## Unit tests and data integrity
+
+`scripts/lib/dedupe.mjs` (the OSM duplicate-collapsing logic) has plain
+Node unit tests, and a small script confirms the shipped dataset is still
+fully deduplicated -- both run in CI alongside typecheck on every push:
+
+```sh
+npm run test:unit
+npm run check-data
+```
 
 ## End-to-end tests
 

@@ -1,4 +1,4 @@
-name: Typecheck
+name: Checks
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
       - claude/session-irzd1k
 
 jobs:
-  typecheck:
+  checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,3 +16,5 @@ jobs:
           node-version: 20
       - run: npm install
       - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npm run check-data

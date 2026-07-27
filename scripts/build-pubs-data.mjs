@@ -7,6 +7,7 @@
 // Usage: node scripts/build-pubs-data.mjs <path-to-pubs.geojson> [path-to-coastline.geojson]
 
 import fs from "node:fs/promises";
+import { dedupeRows } from "./lib/dedupe.mjs";
 
 const inputPath = process.argv[2];
 const coastlinePath = process.argv[3];
@@ -181,7 +182,6 @@ if (coastlinePath) {
 const raw = await fs.readFile(inputPath, "utf8");
 const geojson = JSON.parse(raw);
 
-const seen = new Set();
 const rows = [];
 
 for (const feature of geojson.features || []) {
@@ -205,10 +205,6 @@ for (const feature of geojson.features || []) {
 
   const roundedLat = Math.round(lat * 1e5) / 1e5;
   const roundedLon = Math.round(lon * 1e5) / 1e5;
-
-  const key = `${name}|${roundedLat}|${roundedLon}`;
-  if (seen.has(key)) continue;
-  seen.add(key);
 
   const operator = tags.operator || tags.brand || "";
   const website = tags.website || tags["contact:website"] || "";
@@ -274,21 +270,28 @@ for (const feature of geojson.features || []) {
   ]);
 }
 
-rows.sort((a, b) => a[1] - b[1] || a[2] - b[2]);
+const beforeDedupeCount = rows.length;
+const deduped = dedupeRows(rows);
+deduped.sort((a, b) => a[1] - b[1] || a[2] - b[2]);
 
 await fs.mkdir(new URL("../data", import.meta.url), { recursive: true });
-await fs.writeFile(new URL("../data/pubs-gb.json", import.meta.url), JSON.stringify(rows));
+await fs.writeFile(new URL("../data/pubs-gb.json", import.meta.url), JSON.stringify(deduped));
 
 // A small companion file the app fetches to show "data last updated" --
 // keeping this honest and automatic (regenerated every time this script
 // runs) beats hardcoding a date that silently goes stale.
 await fs.writeFile(
   new URL("../data/pubs-meta.json", import.meta.url),
-  JSON.stringify({ updatedAt: new Date().toISOString(), pubCount: rows.length })
+  JSON.stringify({ updatedAt: new Date().toISOString(), pubCount: deduped.length })
 );
 
-console.log(`Wrote ${rows.length} pubs to data/pubs-gb.json`);
+console.log(`Wrote ${deduped.length} pubs to data/pubs-gb.json`);
+console.log(
+  `(${beforeDedupeCount - deduped.length} OSM node/way duplicates collapsed out of ${beforeDedupeCount} raw entries)`
+);
 if (coastlineGrid) {
-  const nearSeaCount = rows.filter((r) => r[23] === "1").length;
-  console.log(`${nearSeaCount} pubs (${((100 * nearSeaCount) / rows.length).toFixed(1)}%) within ${NEAR_SEA_THRESHOLD_MILES}mi of the coast`);
+  const nearSeaCount = deduped.filter((r) => r[23] === "1").length;
+  console.log(
+    `${nearSeaCount} pubs (${((100 * nearSeaCount) / deduped.length).toFixed(1)}%) within ${NEAR_SEA_THRESHOLD_MILES}mi of the coast`
+  );
 }

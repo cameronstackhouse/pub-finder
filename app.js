@@ -568,68 +568,13 @@ async function geocodePostcode(postcode) {
   };
 }
 
-// Same physical pub sometimes appears twice in the OSM data (e.g. a node
-// and a way both tagged amenity=pub for the same building). Address tags
-// are frequently missing on one of the two, so matching on name + address
-// text alone misses that case -- instead this groups by name and then
-// clusters entries of the same name that are within a few dozen metres of
-// each other, keeping whichever copy has a usable address.
-const DEDUPE_DISTANCE_MILES = 0.05; // ~80m
-
-/**
- * @param {Pub[]} pubs
- * @returns {Pub[]}
- */
-function dedupePubs(pubs) {
-  const groups = new Map();
-  for (const pub of pubs) {
-    const key = pub.name.trim().toLowerCase();
-    const group = groups.get(key);
-    if (group) group.push(pub);
-    else groups.set(key, [pub]);
-  }
-
-  const deduped = [];
-  for (const group of groups.values()) {
-    if (group.length === 1) {
-      deduped.push(group[0]);
-      continue;
-    }
-
-    const clusters = [];
-    for (const pub of group) {
-      const cluster = clusters.find(
-        (c) => haversineMiles(c[0].lat, c[0].lon, pub.lat, pub.lon) <= DEDUPE_DISTANCE_MILES
-      );
-      if (cluster) cluster.push(pub);
-      else clusters.push([pub]);
-    }
-    for (const cluster of clusters) deduped.push(pickBestOfCluster(cluster));
-  }
-
-  return deduped;
-}
-
-/**
- * @param {Pub[]} cluster
- * @returns {Pub}
- */
-function pickBestOfCluster(cluster) {
-  if (cluster.length === 1) return cluster[0];
-  return cluster.slice().sort((a, b) => {
-    const aHasAddress = a.address === "Address not available" ? 1 : 0;
-    const bHasAddress = b.address === "Address not available" ? 1 : 0;
-    if (aHasAddress !== bHasAddress) return aHasAddress - bHasAddress;
-    return a.distanceMiles - b.distanceMiles;
-  })[0];
-}
 
 // Filters the full dataset down to pubs within radiusMiles of origin. Only
-// pubs that actually match get a distance-tagged copy allocated, and
-// deduping/sorting only ever runs on that (usually much smaller) matching
-// set -- the full ~56k dataset is never copied, deduped, or sorted
-// wholesale on the common path. Falls back to the nearest few pubs overall
-// when nothing is in range.
+// pubs that actually match get a distance-tagged copy allocated and sorted
+// -- the full ~38k dataset is never copied or sorted wholesale on the
+// common path. Falls back to the nearest few pubs overall when nothing is
+// in range. (OSM node/way duplicates used to need deduping here too, but
+// that now happens once at build time -- see scripts/lib/dedupe.mjs.)
 /**
  * @param {Pub[]} allPubs
  * @param {Origin} origin
@@ -647,20 +592,14 @@ function searchPubs(allPubs, origin, radiusMiles) {
   }
 
   if (withinRadius.length > 0) {
-    const deduped = dedupePubs(withinRadius);
-    deduped.sort((a, b) => a.distanceMiles - b.distanceMiles);
-    return { pubs: deduped, isFallback: false };
+    withinRadius.sort((a, b) => a.distanceMiles - b.distanceMiles);
+    return { pubs: withinRadius, isFallback: false };
   }
 
-  // Rare path (nothing in radius): grab more candidates than needed before
-  // deduping, rather than deduping the full dataset just to throw most of
-  // it away.
-  const nearestCandidates = allPubs
+  const nearest = allPubs
     .map((pub) => ({ ...pub, distanceMiles: haversineMiles(origin.lat, origin.lon, pub.lat, pub.lon) }))
     .sort((a, b) => a.distanceMiles - b.distanceMiles)
-    .slice(0, NEAREST_FALLBACK_COUNT * 4);
-
-  const nearest = dedupePubs(nearestCandidates).slice(0, NEAREST_FALLBACK_COUNT);
+    .slice(0, NEAREST_FALLBACK_COUNT);
 
   return { pubs: nearest, isFallback: true };
 }
@@ -1147,16 +1086,12 @@ async function loadCrawlCandidates() {
  * @param {Origin} origin
  * @param {number} poolSize
  * @param {number} maxDistanceMiles How far from origin a pub is allowed to be to even be considered.
- * @returns {Pub[]} The `poolSize` nearest pubs to origin within maxDistanceMiles, deduped and sorted nearest-first.
+ * @returns {Pub[]} The `poolSize` nearest pubs to origin within maxDistanceMiles, sorted nearest-first.
  */
 function nearestCandidatePubs(allPubs, origin, poolSize, maxDistanceMiles) {
-  const withDistance = allPubs
+  return allPubs
     .map((pub) => ({ ...pub, distanceMiles: haversineMiles(origin.lat, origin.lon, pub.lat, pub.lon) }))
     .filter((pub) => pub.distanceMiles <= maxDistanceMiles)
-    .sort((a, b) => a.distanceMiles - b.distanceMiles)
-    .slice(0, poolSize * 4); // headroom before dedupe removes near-duplicate OSM entries
-
-  return dedupePubs(withDistance)
     .sort((a, b) => a.distanceMiles - b.distanceMiles)
     .slice(0, poolSize);
 }
@@ -1552,11 +1487,7 @@ async function initExploreMap() {
   setMapStatus("Loading pubs…");
   try {
     const allPubs = await getPubsData();
-    // Same OSM node/way duplicates that searchPubs()/nearestCandidatePubs()
-    // already dedupe for Search and Crawl -- banned pubs are excluded first
-    // so a banned duplicate can't get picked as the "best of cluster"
-    // survivor and reappear anyway.
-    for (const pub of dedupePubs(excludeBannedPubs(allPubs))) {
+    for (const pub of excludeBannedPubs(allPubs)) {
       exploreMarkersByKey.set(pubKey(pub), { marker: buildExploreMarker(pub), pub });
     }
     applyExploreFilters();
