@@ -15,6 +15,54 @@ test("Map tab loads pubs into the cluster group and shows a count", async ({ pag
   expect(layerCount).toBe(20);
 });
 
+test("OSM node/way duplicates (same name, near-identical coordinates) collapse to one marker", async ({ page }) => {
+  await mockApp(page);
+  // Override the dataset with a deliberate duplicate pair, matching a real
+  // one found in production ("Victoria Inn", TR3 6BY -- two OSM entries
+  // ~1m apart), plus one genuinely distinct pub.
+  await page.route("**/data/pubs-gb.json*", (route) => {
+    const dupeRow = (lat, lon) => [
+      "Victoria Inn",
+      lat,
+      lon,
+      "Chyvelah Road, Truro, TR3 6BY",
+      "",
+      "",
+      "",
+      "",
+      "",
+      false,
+      false,
+      false,
+      "",
+      false,
+      false,
+      false,
+      false,
+      "",
+      "",
+      "",
+      "",
+      false,
+      false,
+      false,
+    ];
+    const rows = [
+      dupeRow(50.26337, -5.11344),
+      dupeRow(50.26338, -5.11345),
+      ["Distinct Pub", 51.0, -1.0, "1 Other St", "", "", "", "", "", false, false, false, "", false, false, false, false, "", "", "", "", false, false, false],
+    ];
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(rows) });
+  });
+
+  await page.goto("/");
+  await page.click("#tab-map");
+  await expect(page.locator("#map-status")).toHaveText("Showing 2 pubs");
+
+  const layerCount = await page.evaluate(() => window.__lastClusterGroup.getLayers().length);
+  expect(layerCount).toBe(2);
+});
+
 test("switching to another tab and back doesn't rebuild the map or duplicate markers", async ({ page }) => {
   await mockApp(page, { rowCount: 15 });
   await page.goto("/");

@@ -1552,7 +1552,11 @@ async function initExploreMap() {
   setMapStatus("Loading pubs…");
   try {
     const allPubs = await getPubsData();
-    for (const pub of excludeBannedPubs(allPubs)) {
+    // Same OSM node/way duplicates that searchPubs()/nearestCandidatePubs()
+    // already dedupe for Search and Crawl -- banned pubs are excluded first
+    // so a banned duplicate can't get picked as the "best of cluster"
+    // survivor and reappear anyway.
+    for (const pub of dedupePubs(excludeBannedPubs(allPubs))) {
       exploreMarkersByKey.set(pubKey(pub), { marker: buildExploreMarker(pub), pub });
     }
     applyExploreFilters();
