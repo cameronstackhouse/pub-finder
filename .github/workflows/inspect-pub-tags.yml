@@ -1,0 +1,39 @@
+name: Inspect pub tag coverage
+
+# Diagnostic only -- downloads the same OSM extract the dataset is built
+# from and reports which tags GB pubs actually carry, without changing or
+# committing anything. Use it to check real coverage before building a
+# feature on a given tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      patterns:
+        description: "Space-separated key substrings to report values for (default: drink-related)"
+        required: false
+        default: ""
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install osmium-tool
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y osmium-tool
+
+      - name: Download Great Britain OSM extract
+        run: curl -fL -o gb.osm.pbf https://download.geofabrik.de/europe/great-britain-latest.osm.pbf
+
+      - name: Filter to amenity=pub and export to GeoJSON
+        run: |
+          osmium tags-filter gb.osm.pbf nwr/amenity=pub -o pubs.osm.pbf --overwrite
+          osmium export pubs.osm.pbf -o pubs.geojson --overwrite
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: node scripts/inspect-tags.mjs pubs.geojson ${{ github.event.inputs.patterns }}
