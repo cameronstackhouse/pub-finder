@@ -1,10 +1,15 @@
 name: Deploy to GitHub Pages
 
 on:
+  # main only. Deploying from a feature branch raced with the main deploy
+  # whenever both were pushed at the same commit -- two runs, same
+  # `pages` concurrency group, and the loser failed noisily on a commit
+  # that had actually deployed fine. The github-pages environment only
+  # accepts deploys from the default branch anyway, so the branch run
+  # could never have succeeded.
   push:
     branches:
       - main
-      - claude/session-irzd1k
   workflow_dispatch:
   workflow_run:
     workflows: ["Update GB pubs dataset"]
