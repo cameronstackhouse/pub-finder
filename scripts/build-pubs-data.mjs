@@ -218,7 +218,14 @@ for (const feature of geojson.features || []) {
   const beerGarden = tags.beer_garden === "yes" || tags.outdoor_seating === "yes" ? "1" : "";
   const dogFriendly = tags.dog === "yes" || tags.dog === "leashed" ? "1" : "";
   const foodServed = tags.food === "yes" ? "1" : "";
-  const realAle = tags.real_ale === "yes" ? "1" : "";
+  // real_ale is usually "yes", but several hundred GB pubs give a number
+  // instead: the count of handpumps on the bar. That's the closest thing
+  // OSM has to "how many cask ales are actually on", so it's kept rather
+  // than flattened to a boolean (which is what used to happen -- a
+  // real_ale=4 pub read as having no real ale at all).
+  const realAlePumpCount = /^\d{1,2}$/.test((tags.real_ale || "").trim()) ? Number(tags.real_ale.trim()) : 0;
+  const realAlePumps = realAlePumpCount > 0 ? String(realAlePumpCount) : "";
+  const realAle = tags.real_ale === "yes" || realAlePumpCount > 0 ? "1" : "";
   const darts = tags.darts === "yes" ? "1" : "";
   const pool = tags.pool === "yes" ? "1" : "";
 
@@ -250,6 +257,17 @@ for (const feature of geojson.features || []) {
   const microbrewery = tags.microbrewery === "yes" ? "1" : "";
   const realCider = tags.real_cider === "yes" ? "1" : "";
 
+  // OSM has no usable data on which individual beers are pouring right now
+  // (only ~45 pubs in GB name a specific drink), and that changes weekly
+  // anyway. What it does sometimes have is a pointer to where the real
+  // answer lives: the pub's own menu, or its Untappd venue page, which
+  // carries an actual live tap list. Link out to those rather than
+  // pretending to know what's on.
+  const menuUrl = /^https?:\/\//i.test(tags["website:menu"] || "") ? tags["website:menu"] : "";
+  const untappdUrl = /^https?:\/\/(www\.)?untappd\.com\//i.test(tags["contact:untappd"] || "")
+    ? tags["contact:untappd"]
+    : "";
+
   rows.push([
     name,
     roundedLat,
@@ -279,6 +297,9 @@ for (const feature of geojson.features || []) {
     microbrewery,
     realCider,
     rotatingTaps ? "1" : "",
+    realAlePumps,
+    menuUrl,
+    untappdUrl,
   ]);
 }
 
@@ -320,4 +341,11 @@ console.log(
     `${deduped.filter((r) => r[25] === "1").length} brew on site, ` +
     `${deduped.filter((r) => r[26] === "1").length} serve real cider; ` +
     `${withAnyTapInfo} (${pct(withAnyTapInfo)}) have some drink info incl. real ale`
+);
+const pumps = deduped.filter((r) => r[28]).length;
+const menus = deduped.filter((r) => r[29]).length;
+const untappd = deduped.filter((r) => r[30]).length;
+console.log(
+  `Tap pointers: ${pumps} pubs (${pct(pumps)}) state a handpump count, ` +
+    `${menus} (${pct(menus)}) link a menu, ${untappd} (${pct(untappd)}) link an Untappd venue`
 );

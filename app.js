@@ -39,6 +39,9 @@ const WALK_SPEED_MPH = 3;
  * @property {boolean} microbrewery Brews its own beer on the premises.
  * @property {boolean} realCider
  * @property {boolean} rotatingTaps Guest/changing beer selection rather than (or as well as) a fixed lineup.
+ * @property {number} realAlePumps Number of real ale handpumps on the bar; 0 when unstated.
+ * @property {string} menuUrl The pub's own menu, where OSM records one.
+ * @property {string} untappdUrl The pub's Untappd venue page, which carries a live tap list.
  * @property {number} [distanceMiles] Only set once a pub has been matched against a search origin; absent for a pub viewed straight from favourites.
  * @property {{extract: string, url: string, thumbnail: string|null}} [wikiSummaryCache] Populated lazily the first time "Tell me more" fetches this pub's Wikipedia summary.
  */
@@ -395,6 +398,9 @@ async function loadPubsData() {
         microbrewery,
         realCider,
         rotatingTaps,
+        realAlePumps,
+        menuUrl,
+        untappdUrl,
       ]) => ({
         name,
         lat,
@@ -424,6 +430,9 @@ async function loadPubsData() {
         microbrewery: Boolean(microbrewery),
         realCider: Boolean(realCider),
         rotatingTaps: Boolean(rotatingTaps),
+        realAlePumps: Number(realAlePumps) || 0,
+        menuUrl: menuUrl || "",
+        untappdUrl: untappdUrl || "",
       })
     );
   } finally {
@@ -844,10 +853,13 @@ function formatPayment(pub) {
  * @returns {string}
  */
 function formatTapSelection(pub) {
-  if (pub.breweries && pub.rotatingTaps) return `${pub.breweries} · plus guest beers`;
-  if (pub.breweries) return pub.breweries;
-  if (pub.rotatingTaps) return "Guest / rotating beers";
-  return "";
+  const parts = [];
+  if (pub.breweries) parts.push(pub.breweries);
+  if (pub.rotatingTaps) parts.push(pub.breweries ? "plus guest beers" : "Guest / rotating beers");
+  if (pub.realAlePumps > 0) {
+    parts.push(`${pub.realAlePumps} real ale handpump${pub.realAlePumps === 1 ? "" : "s"}`);
+  }
+  return parts.join(" · ");
 }
 
 /**
@@ -897,6 +909,11 @@ function renderFacts(pub) {
   const entries = [
     pub.openingHours && ["Opening hours", pub.openingHours, "text"],
     formatTapSelection(pub) && ["On tap", formatTapSelection(pub), "text"],
+    // Nobody publishes a free, GB-wide feed of what's actually pouring
+    // right now, and it changes week to week -- so where OSM knows where
+    // the pub's own list lives, link there instead of guessing.
+    pub.untappdUrl && ["Live tap list", pub.untappdUrl, "url", "See what's on (Untappd)"],
+    pub.menuUrl && ["Menu", pub.menuUrl, "url", "View their menu"],
     pub.phone && ["Phone", pub.phone, "tel"],
     pub.website && ["Website", pub.website, "url"],
     formatWheelchairAccess(pub.wheelchair) && ["Access", formatWheelchairAccess(pub.wheelchair), "text"],
@@ -906,7 +923,7 @@ function renderFacts(pub) {
     amenities.length > 0 && ["Amenities", amenities.join(", "), "text"],
   ].filter(Boolean);
 
-  for (const [label, value, kind] of entries) {
+  for (const [label, value, kind, linkText] of entries) {
     const dt = document.createElement("dt");
     dt.textContent = label;
     const dd = document.createElement("dd");
@@ -914,7 +931,8 @@ function renderFacts(pub) {
     if (kind === "url") {
       const a = document.createElement("a");
       a.href = /^https?:\/\//i.test(value) ? value : `https://${value}`;
-      a.textContent = value;
+      // Long menu URLs read badly as link text, so those pass their own.
+      a.textContent = linkText || value;
       a.target = "_blank";
       a.rel = "noopener";
       dd.appendChild(a);
@@ -1737,6 +1755,9 @@ function toggleFavourite(pub) {
       microbrewery: Boolean(pub.microbrewery),
       realCider: Boolean(pub.realCider),
       rotatingTaps: Boolean(pub.rotatingTaps),
+      realAlePumps: Number(pub.realAlePumps) || 0,
+      menuUrl: pub.menuUrl || "",
+      untappdUrl: pub.untappdUrl || "",
     });
   }
 
