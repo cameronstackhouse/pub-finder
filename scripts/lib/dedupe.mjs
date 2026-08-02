@@ -30,16 +30,23 @@ export function haversineMiles(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-// Row indexes for every field beyond name/lat/lon worth counting towards
-// "which duplicate has more complete data". There's no search origin to
-// break ties by at build time (unlike the old client-side version of this
-// logic, which preferred whichever copy was closer to wherever the user
-// was searching from), so data completeness is the best available signal.
-const COMPLETENESS_INDEXES = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
+// Every field beyond name/lat/lon counts towards "which duplicate has more
+// complete data". There's no search origin to break ties by at build time
+// (unlike the old client-side version of this logic, which preferred
+// whichever copy was closer to wherever the user was searching from), so
+// data completeness is the best available signal. Counted by scanning from
+// index 3 to the end of the row rather than a fixed index list, so columns
+// added later are picked up automatically instead of being silently
+// excluded from the score.
+const FIRST_OPTIONAL_FIELD_INDEX = 3;
 
 /** @param {Array} row */
 function completenessScore(row) {
-  return COMPLETENESS_INDEXES.reduce((score, i) => score + (row[i] ? 1 : 0), 0);
+  let score = 0;
+  for (let i = FIRST_OPTIONAL_FIELD_INDEX; i < row.length; i++) {
+    if (row[i]) score++;
+  }
+  return score;
 }
 
 /** @param {Array[]} cluster */

@@ -35,6 +35,10 @@ const WALK_SPEED_MPH = 3;
  * @property {boolean} darts
  * @property {boolean} pool
  * @property {boolean} nearSea
+ * @property {string} breweries "; "-joined list of the beer brands OSM says this pub serves; empty when unknown.
+ * @property {boolean} microbrewery Brews its own beer on the premises.
+ * @property {boolean} realCider
+ * @property {boolean} rotatingTaps Guest/changing beer selection rather than (or as well as) a fixed lineup.
  * @property {number} [distanceMiles] Only set once a pub has been matched against a search origin; absent for a pub viewed straight from favourites.
  * @property {{extract: string, url: string, thumbnail: string|null}} [wikiSummaryCache] Populated lazily the first time "Tell me more" fetches this pub's Wikipedia summary.
  */
@@ -383,6 +387,14 @@ async function loadPubsData() {
         darts,
         pool,
         nearSea,
+        // Tap columns were added after the dataset already shipped; a
+        // dataset built before that simply has shorter rows, so these come
+        // through undefined and fall back to empty/false below rather than
+        // breaking. No positional realignment needed either way.
+        breweries,
+        microbrewery,
+        realCider,
+        rotatingTaps,
       ]) => ({
         name,
         lat,
@@ -408,6 +420,10 @@ async function loadPubsData() {
         darts: Boolean(darts),
         pool: Boolean(pool),
         nearSea: Boolean(nearSea),
+        breweries: breweries || "",
+        microbrewery: Boolean(microbrewery),
+        realCider: Boolean(realCider),
+        rotatingTaps: Boolean(rotatingTaps),
       })
     );
   } finally {
@@ -817,6 +833,23 @@ function formatPayment(pub) {
   return "";
 }
 
+// Describes what's on tap, only ever claiming what the OSM tags actually
+// stated. A pub tagged brewery=yes serves beer from *some* brewery without
+// saying which, so it contributes nothing here rather than rendering as
+// "Brewery: yes" -- same rule as the payment/wheelchair formatters above.
+// Beer availability is also nowhere near universally tagged, so the row is
+// simply absent for most pubs instead of implying "no beer".
+/**
+ * @param {Pub} pub
+ * @returns {string}
+ */
+function formatTapSelection(pub) {
+  if (pub.breweries && pub.rotatingTaps) return `${pub.breweries} · plus guest beers`;
+  if (pub.breweries) return pub.breweries;
+  if (pub.rotatingTaps) return "Guest / rotating beers";
+  return "";
+}
+
 /**
  * @param {Pub["wheelchair"]} value
  * @returns {string}
@@ -851,6 +884,8 @@ function renderFacts(pub) {
 
   const amenities = [
     pub.realAle && "Real ale",
+    pub.realCider && "Real cider",
+    pub.microbrewery && "Brews its own beer",
     pub.beerGarden && "Beer garden",
     pub.dogFriendly && "Dog-friendly",
     pub.foodServed && "Food served",
@@ -861,6 +896,7 @@ function renderFacts(pub) {
 
   const entries = [
     pub.openingHours && ["Opening hours", pub.openingHours, "text"],
+    formatTapSelection(pub) && ["On tap", formatTapSelection(pub), "text"],
     pub.phone && ["Phone", pub.phone, "tel"],
     pub.website && ["Website", pub.website, "url"],
     formatWheelchairAccess(pub.wheelchair) && ["Access", formatWheelchairAccess(pub.wheelchair), "text"],
@@ -1697,6 +1733,10 @@ function toggleFavourite(pub) {
       darts: Boolean(pub.darts),
       pool: Boolean(pub.pool),
       nearSea: Boolean(pub.nearSea),
+      breweries: pub.breweries || "",
+      microbrewery: Boolean(pub.microbrewery),
+      realCider: Boolean(pub.realCider),
+      rotatingTaps: Boolean(pub.rotatingTaps),
     });
   }
 

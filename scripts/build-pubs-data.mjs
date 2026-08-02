@@ -8,6 +8,7 @@
 
 import fs from "node:fs/promises";
 import { dedupeRows } from "./lib/dedupe.mjs";
+import { parseBreweries } from "./lib/breweries.mjs";
 
 const inputPath = process.argv[2];
 const coastlinePath = process.argv[3];
@@ -242,6 +243,13 @@ for (const feature of geojson.features || []) {
 
   const nearSea = coastlineGrid && isNearSea(coastlineGrid, lon, lat) ? "1" : "";
 
+  // What's on tap. `brewery` names the beers/brands served; microbrewery
+  // means it's brewed on the premises; real_cider is the cider equivalent
+  // of the real_ale flag already collected above.
+  const { names: breweries, rotating: rotatingTaps } = parseBreweries(tags.brewery);
+  const microbrewery = tags.microbrewery === "yes" ? "1" : "";
+  const realCider = tags.real_cider === "yes" ? "1" : "";
+
   rows.push([
     name,
     roundedLat,
@@ -267,6 +275,10 @@ for (const feature of geojson.features || []) {
     darts,
     pool,
     nearSea,
+    breweries,
+    microbrewery,
+    realCider,
+    rotatingTaps ? "1" : "",
   ]);
 }
 
@@ -295,3 +307,17 @@ if (coastlineGrid) {
     `${nearSeaCount} pubs (${((100 * nearSeaCount) / deduped.length).toFixed(1)}%) within ${NEAR_SEA_THRESHOLD_MILES}mi of the coast`
   );
 }
+
+// Tap-data coverage, logged so it's visible how thin or thick OSM's
+// brewery tagging actually is rather than assumed.
+const pct = (n) => `${((100 * n) / deduped.length).toFixed(1)}%`;
+const namedBreweries = deduped.filter((r) => r[24]).length;
+const rotating = deduped.filter((r) => r[27] === "1").length;
+const withAnyTapInfo = deduped.filter((r) => r[24] || r[25] === "1" || r[26] === "1" || r[27] === "1" || r[13] === "1").length;
+console.log(
+  `Tap data: ${namedBreweries} pubs (${pct(namedBreweries)}) name a brewery, ` +
+    `${rotating} (${pct(rotating)}) note guest/rotating beers, ` +
+    `${deduped.filter((r) => r[25] === "1").length} brew on site, ` +
+    `${deduped.filter((r) => r[26] === "1").length} serve real cider; ` +
+    `${withAnyTapInfo} (${pct(withAnyTapInfo)}) have some drink info incl. real ale`
+);

@@ -42,6 +42,19 @@ script collapses these (`scripts/lib/dedupe.mjs`) before writing the file, so
 `data/pubs-gb.json` ships already deduplicated -- the app doesn't need to
 (and doesn't) dedupe on every search/crawl/map load.
 
+### Tap selection
+
+What's on tap comes from OSM's `brewery=*` tag (the beer brands a pub serves),
+plus `microbrewery=*` and `real_cider=*`. No extra data source or API is
+involved -- these tags are already in the same extract the pipeline downloads.
+
+`brewery=*` values are messy in practice, so `scripts/lib/breweries.mjs`
+separates real brewery names from bare `yes`/`no` (which say nothing about
+*which* beers are on) and from `various`/`guest`/`rotating` (a changing
+selection rather than a brand). A pub tagged `brewery=yes` therefore shows no
+tap information at all rather than "On tap: yes". Coverage is partial and the
+build logs exactly how partial on every run, so nothing is assumed.
+
 ## Deployment
 
 Deployed automatically to GitHub Pages via `.github/workflows/deploy.yml` on every push.
